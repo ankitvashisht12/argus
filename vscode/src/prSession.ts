@@ -409,8 +409,18 @@ export class PrSession {
   /**
    * Re-run the AI review, bypassing the content-hash cache (the
    * "ARGUS: Regenerate Review" command). Fires {@link onDidChangeReview}.
+   *
+   * A demo/fixture session has no live agent (`#agent === null`) and its review
+   * comes verbatim from the fixture. There is nothing to regenerate, and routing
+   * it through {@link #runReview} would hit the "claude not found" branch and
+   * wipe the fixture into an error state. So it is a no-op that simply re-emits
+   * the existing fixture review, leaving `review`/`reviewError` untouched.
    */
   async regenerate(): Promise<void> {
+    if (!this.#agent) {
+      this.#onDidChangeReview.fire();
+      return;
+    }
     await this.#runReview({ bypassCache: true });
   }
 

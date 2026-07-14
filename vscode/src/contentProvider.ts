@@ -112,6 +112,22 @@ export function diffUrisForFile(
   return { base, head };
 }
 
+/**
+ * The single source of truth for which `argus://` document a given side of a
+ * changed file maps to. Both the diff editor ({@link diffUrisForFile}) and the
+ * comment threads ({@link module:comments}) resolve side URIs through here, so a
+ * renamed file's base side always uses `oldPath` on both — they can never
+ * diverge into a thread that attaches to a never-opened document.
+ */
+export function argusUriForSide(
+  meta: { owner: string; repo: string; number: number; baseSha: string; headSha: string },
+  file: { path: string; oldPath?: string },
+  side: BlobSide,
+): vscode.Uri {
+  const { base, head } = diffUrisForFile(meta, file);
+  return side === 'base' ? base : head;
+}
+
 /** Render the fallback error document shown when a side can't be fetched. */
 export function errorBanner(side: BlobSide, path: string, message: string): string {
   return (

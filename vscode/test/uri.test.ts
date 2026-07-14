@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  argusUriForSide,
   buildArgusUri,
   diffUrisForFile,
   errorBanner,
@@ -82,6 +83,30 @@ describe('diffUrisForFile', () => {
     const { base, head } = diffUrisForFile(meta, { path: 'a.ts' });
     expect(base.path).toBe('/acme/widgets/482/a.ts');
     expect(head.path).toBe('/acme/widgets/482/a.ts');
+  });
+});
+
+describe('argusUriForSide', () => {
+  it('resolves the base side of a rename through oldPath (matches diffUrisForFile)', () => {
+    const file = { path: 'new/name.ts', oldPath: 'old/name.ts' };
+    const base = argusUriForSide(meta, file, 'base');
+    // Must equal the base doc the diff editor opens, NOT the head path.
+    expect(base.toString()).toBe(diffUrisForFile(meta, file).base.toString());
+    expect(base.authority).toBe('base');
+    expect(base.path).toBe('/acme/widgets/482/old/name.ts');
+  });
+
+  it('resolves the head side to the head path', () => {
+    const file = { path: 'new/name.ts', oldPath: 'old/name.ts' };
+    const head = argusUriForSide(meta, file, 'head');
+    expect(head.toString()).toBe(diffUrisForFile(meta, file).head.toString());
+    expect(head.path).toBe('/acme/widgets/482/new/name.ts');
+  });
+
+  it('uses the same path on both sides for a non-rename', () => {
+    const file = { path: 'a.ts' };
+    expect(argusUriForSide(meta, file, 'base').path).toBe('/acme/widgets/482/a.ts');
+    expect(argusUriForSide(meta, file, 'head').path).toBe('/acme/widgets/482/a.ts');
   });
 });
 

@@ -22,9 +22,9 @@ import { promisify } from 'node:util';
 
 import * as vscode from 'vscode';
 
-import type { AnchoredHunkReview, DiffSide, HunkImportance } from '@argus/engine';
+import type { AnchoredHunkReview, DiffSide, FileChange, HunkImportance } from '@argus/engine';
 import type { PrSession, SessionAccessor } from './prSession';
-import { buildArgusUri, parseArgusUri } from './contentProvider';
+import { argusUriForSide, parseArgusUri } from './contentProvider';
 
 const execFileAsync = promisify(execFile);
 
@@ -101,6 +101,25 @@ export function lookoutBody(anchor: AnchoredHunkReview): vscode.MarkdownString {
   return md;
 }
 
+/**
+ * The `argus://` document an AI thread must attach to, resolved the same way the
+ * diff editor resolves the file's sides. Crucially, an `old`-side anchor on a
+ * renamed file resolves through the file's `oldPath` (like the base diff
+ * document) rather than the anchor's head `path`; otherwise the thread would
+ * attach to a document that is never opened and the note would be invisible.
+ *
+ * Returns `null` when the anchor's file is not in the session (nothing to open).
+ */
+export function aiThreadUri(
+  meta: { owner: string; repo: string; number: number; baseSha: string; headSha: string },
+  files: readonly FileChange[],
+  anchor: AnchoredHunkReview,
+): vscode.Uri | null {
+  const file = files.find((f) => f.path === anchor.path);
+  if (!file) return null;
+  return argusUriForSide(meta, file, sideToAuthority(anchor.side));
+}
+
 /* -------------------------------------------------------------------------- */
 /* Comment model                                                              */
 /* -------------------------------------------------------------------------- */
@@ -160,16 +179,8 @@ function disposeAiThreads(): void {
 
 function createAiThread(session: PrSession, anchor: AnchoredHunkReview): void {
   if (!controller) return;
-  const side = sideToAuthority(anchor.side);
-  const { owner, repo, number, baseSha, headSha } = session.meta;
-  const uri = buildArgusUri({
-    side,
-    owner,
-    repo,
-    number,
-    path: anchor.path,
-    sha: side === 'base' ? baseSha : headSha,
-  });
+  const uri = aiThreadUri(session.meta, session.files, anchor);
+  if (!uri) return;
 
   const start = Math.max(0, anchor.startLine - 1);
   const end = Math.max(start, anchor.endLine - 1);
@@ -222,7 +233,27 @@ function syncSession(): void {
   boundSession = session;
   reviewSub?.dispose();
   reviewSub = session ? session.onDidChangeReview(() => rebuildAiThreads()) : undefined;
+  // A session swap invalidates every draft by definition: their {path, line}
+  // anchor points at the *previous* PR's diff, so submitting them against the
+  // new PR would mis-anchor or be rejected. Discard them (and tell the user).
+  discardDraftsOnSessionSwap();
   rebuildAiThreads();
+}
+
+/**
+ * Drop every user draft thread because the session was replaced, warning the
+ * user (non-blocking) when drafts were actually discarded. Distinct from
+ * {@link clearDrafts}, which is the silent post-submit cleanup.
+ */
+function discardDraftsOnSessionSwap(): void {
+  const discarded = getDraftComments().length;
+  if (draftRegistry.size === 0) return;
+  clearDrafts();
+  if (discarded === 0) return;
+  void vscode.window.showInformationMessage(
+    `ARGUS: discarded ${discarded} draft review ` +
+      `comment${discarded === 1 ? '' : 's'} from the previous pull request.`,
+  );
 }
 
 /* -------------------------------------------------------------------------- */
