@@ -1,0 +1,722 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Argus — Review long PRs like the author walked you through them.</title>
+<meta name="description" content="Argus is a local-first AI code reviewer. A single Go binary that infers a change's intent, orders the files into a guided reading path, and explains why each hunk changed in plain language — with Claude a keystroke away. Drives your own Claude CLI, on your machine.">
+
+<!-- Deliberately dark-only: Argus is a dark-native, developer terminal tool. No light mode. -->
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#05110b">
+
+<!-- Open Graph / Twitter. og:image + og:url omitted deliberately: no real share image or canonical domain to point at yet (not fabricating one). -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Argus">
+<meta property="og:title" content="Argus — review long PRs like the author walked you through them">
+<meta property="og:description" content="A local-first AI code reviewer that infers a change's intent, orders the files, and explains why each hunk changed — so you read a long PR like the author walked you through it. One Go binary, your Claude subscription, nothing leaves the laptop.">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Argus — the local-first PR reviewer">
+<meta name="twitter:description" content="Infers intent, orders the files, and explains why each hunk changed in plain language — so a long PR reads like the author walked you through it. One Go binary, driving your own Claude CLI.">
+
+<!-- Inline SVG favicon (the Argus eye): no external request -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2305110b'/%3E%3Cpath d='M4 16 Q16 6 28 16 Q16 26 4 16 Z' fill='none' stroke='%234dffb0' stroke-width='1.5'/%3E%3Cpath d='M16 10 L22 16 L16 22 L10 16 Z' fill='none' stroke='%234dffb0' stroke-width='1.3'/%3E%3Ccircle cx='16' cy='16' r='2.4' fill='%234dffb0'/%3E%3C/svg%3E">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Schibsted+Grotesk:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+
+<style>
+/* Hallmark · genre: atmospheric (run with modern-minimal discipline) · macrostructure: Narrative Workflow · theme: Argus Terminal (custom · dark · mono-forward · phosphor-green) · enrichment: hand-built argus session renderings (Tier A · no images · no re-drawn OS/browser chrome) · nav: N8 · footer: Ft4
+   Hallmark · pre-emit critique (post-polish): P5 H5 E5 S5 R5 V5
+   tone: technical / austere · anchor hue: phosphor-green (emerald #4dffb0) · secondary: moon-blue #6aa6ff (waiting only)
+   theme axes: paper=dark(L≈11%) · display=mono-forward · accent=chromatic-green
+   contrast: pass(46–50) · slop: pass(51–55) · honest: pass(56) · chrome: pass(57) · tokens: pass(58) · responsive: pass(59) · icons: pass(60) · mobile: pass(36,59,61–69)
+   Brand identity (emerald Argus eye + add=green / del=red diff colours) is the landing-page voice; the app's diff palette lives in internal/config/theme.go and the product spec in docs/superpowers/specs/2026-06-15-argus-design.md. The running example renders a real repo commit: internal/agent/redact.go (the `==`-swallow redaction guard, git 3fdc915 + hyphen-key widening 4180ea3). */
+
+:root{
+  /* ---- Surfaces (dark, faintly emerald) ---- */
+  --bg:#05110b; --bg-deep:#030c08;
+  --panel:rgba(77,255,176,.05); --panel-2:rgba(77,255,176,.09);
+  --line:rgba(77,255,176,.18); --line-2:rgba(77,255,176,.32); --line-3:rgba(77,255,176,.5);
+
+  /* ---- Text ---- */
+  --ink:#e7f4ec; --mut:#85a895; --dim:#6a8676; /* --dim lightened to clear 4.5:1 on --bg */
+  --near-white:#f2fff8; /* specular / selection highlight — never a base surface */
+
+  /* ---- Emerald signature (brand + shine) ---- */
+  --em-deep:#0a5a3a; --em:#16c878; --em-bright:#4dffb0; --em-pale:#9dffd4;
+  --em-soft:rgba(77,255,176,.13);
+  --accent-ink:#03130b;          /* text on emerald fill — gate 49 */
+  --eye-hi:#eafff5; --eye-lo:#053b27; /* the faceted-gem mark's internal gradient */
+
+  /* ---- Status ---- */
+  --waiting:#6aa6ff; --waiting-soft:rgba(106,166,255,.14);
+  --critical:#ff6b6b; --critical-soft:rgba(255,107,107,.09); --critical-ink:#f4b3b3;
+  --warn:#ffce73;
+
+  /* ---- Diff / terminal tints ---- */
+  --add-bg:rgba(77,255,176,.09); --expl-bg:rgba(77,255,176,.05);
+
+  /* ---- Type ---- */
+  --font-display:'Instrument Serif',Georgia,serif;
+  --font-ui:'Schibsted Grotesk',system-ui,sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,'SFMono-Regular',monospace;
+
+  /* ---- Type scale (≈1.28) ---- */
+  --text-xs:.72rem; --text-sm:.82rem; --text-base:1rem; --text-md:1.16rem;
+  --text-lg:1.45rem; --text-xl:1.85rem; --text-2xl:2.35rem; --text-3xl:3rem;
+  --text-4xl:3.7rem;
+  --text-display:clamp(2.7rem,5vw + 1rem,4.9rem);
+  --text-display-s:clamp(2.2rem,3.4vw + 1rem,3.55rem);
+
+  /* ---- Spacing (4pt scale) ---- */
+  --space-3xs:.125rem; --space-2xs:.25rem; --space-xs:.5rem; --space-sm:.75rem;
+  --space-md:1rem; --space-lg:1.5rem; --space-xl:2.5rem; --space-2xl:4rem;
+  --space-3xl:6rem; --space-4xl:9rem;
+
+  /* ---- Radii / rules ---- */
+  --r-sm:7px; --r-md:9px; --r-lg:12px; --r-xl:16px;
+  --rule-hair:1px;
+
+  /* ---- Shadows (brand crisp — inset rim + contained downward, never symmetric glow) ---- */
+  --raise:inset 0 0 0 1px rgba(255,255,255,.22),inset 0 1px 0 rgba(255,255,255,.5),0 5px 14px rgba(0,0,0,.35),0 3px 10px rgba(34,200,120,.2);
+  --panel-shadow:0 24px 64px rgba(0,0,0,.5),0 1px 0 rgba(77,255,176,.06);
+
+  /* ---- Motion ---- */
+  --ease-out:cubic-bezier(.22,1,.36,1);
+  --ease-in:cubic-bezier(.4,0,1,1);
+  --ease-in-out:cubic-bezier(.65,0,.35,1);
+  --dur-fast:140ms; --dur-mid:260ms;
+
+  /* ---- Z ---- */
+  --z-base:1; --z-raised:10; --z-sticky:200; --z-sticky-nav:300;
+
+  /* ---- Layout ---- */
+  --banner-height:53px;
+  --page-gutter:clamp(1.25rem,5vw,4.5rem);
+  --measure:62ch; --measure-wide:72ch;
+  --maxw:1200px;
+}
+
+/* ============================ Reset / base ============================ */
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;overflow-x:clip}
+body{
+  overflow-x:clip;margin:0;background-color:var(--bg-deep);color:var(--ink);
+  font-family:var(--font-ui);font-size:var(--text-base);line-height:1.6;font-weight:400;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+}
+/* Fixed emerald atmosphere — the brand's two blooms, contained behind content (atmospheric genre) */
+body::before{
+  content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background:
+    radial-gradient(1100px 560px at 86% -12%, rgba(77,255,176,.13), transparent 55%),
+    radial-gradient(820px 520px at -8% 58%, rgba(22,200,120,.06), transparent 55%);
+}
+svg{max-width:100%;display:block}
+h1,h2,h3,h4,p,ul,ol,figure,pre,blockquote{margin:0}
+a{color:inherit}
+:focus-visible{outline:2px solid var(--em-bright);outline-offset:2px;border-radius:3px}
+::selection{background:rgba(77,255,176,.24);color:var(--near-white)}
+
+.skip{
+  position:absolute;left:var(--space-sm);top:var(--space-sm);z-index:var(--z-sticky-nav);
+  background:var(--em-bright);color:var(--accent-ink);font-family:var(--font-mono);
+  font-size:var(--text-sm);font-weight:600;padding:var(--space-xs) var(--space-sm);border-radius:var(--r-sm);
+  transform:translateY(-160%);transition:transform var(--dur-fast) var(--ease-out);
+}
+.skip:focus{transform:translateY(0)}
+
+.wrap{max-width:var(--maxw);margin-inline:auto;padding-inline:var(--page-gutter)}
+[id]{scroll-margin-top:calc(var(--banner-height) + var(--space-lg))}
+
+/* Shared type helpers */
+.mono{font-family:var(--font-mono)}
+.kicker{
+  font-family:var(--font-mono);font-size:var(--text-xs);font-weight:600;
+  text-transform:uppercase;letter-spacing:.18em;line-height:1.2;color:var(--em-bright);
+  margin:0 0 var(--space-sm);
+}
+
+/* ============================ Buttons / links ============================ */
+.btn{
+  display:inline-flex;align-items:center;gap:.5ch;justify-content:center;
+  font-family:var(--font-ui);font-size:var(--text-sm);font-weight:600;line-height:1;
+  white-space:nowrap;border-radius:var(--r-md);padding:var(--space-sm) var(--space-lg);border:1px solid transparent;
+  cursor:pointer;text-decoration:none;
+  transition:transform var(--dur-fast) var(--ease-out),box-shadow var(--dur-fast) var(--ease-out),
+             background-color var(--dur-fast) var(--ease-out),border-color var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out);
+}
+.btn--gem{color:var(--accent-ink);background:linear-gradient(155deg,var(--em-bright),var(--em) 56%,var(--em-deep));box-shadow:var(--raise)}
+.btn--gem:hover{transform:translateY(-1px)}
+.btn--gem:active{transform:translateY(1px)}
+.btn--gem:disabled{opacity:.55;cursor:not-allowed;transform:none}
+.btn--ghost{background:transparent;border-color:var(--line-2);color:var(--ink)}
+.btn--ghost:hover{border-color:var(--line-3);background:var(--panel)}
+.btn--ghost:active{transform:translateY(1px)}
+.btn--ghost:disabled{opacity:.55;cursor:not-allowed}
+
+/* Brand mark — Argus eye (faceted emerald gem that breathes; the hundred-eyed watchman) */
+.eye{
+  width:22px;height:22px;flex:0 0 auto;border-radius:50%;position:relative;overflow:hidden;
+  background:radial-gradient(circle at 34% 28%,var(--eye-hi),var(--em-bright) 30%,var(--em) 50%,var(--em-deep) 78%,var(--eye-lo));
+  box-shadow:0 0 0 1px rgba(77,255,176,.35),0 0 14px rgba(77,255,176,.28);
+  animation:eye-breathe 3.8s var(--ease-in-out) infinite;
+}
+.eye::after{content:"";position:absolute;width:5px;height:5px;border-radius:50%;background:var(--near-white);top:19%;left:26%;filter:blur(.3px)}
+@keyframes eye-breathe{0%,100%{box-shadow:0 0 0 1px rgba(77,255,176,.35),0 0 12px rgba(77,255,176,.22)}50%{box-shadow:0 0 0 1px rgba(77,255,176,.5),0 0 22px rgba(77,255,176,.4)}}
+
+/* ============================ N8 · Terminal-command nav ============================ */
+.nav{
+  position:sticky;top:0;z-index:var(--z-sticky-nav);min-height:var(--banner-height);
+  background:rgba(3,12,8,.82);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  border-bottom:var(--rule-hair) solid var(--line);
+}
+.nav__inner{
+  max-width:var(--maxw);margin-inline:auto;padding:var(--space-sm) var(--page-gutter);
+  display:flex;align-items:center;gap:var(--space-lg);min-height:var(--banner-height);
+}
+.brand{display:inline-flex;align-items:center;gap:.6ch;text-decoration:none;flex:0 0 auto}
+.brand__word{font-family:var(--font-mono);font-weight:600;font-size:var(--text-sm);letter-spacing:.22em;color:var(--ink);text-shadow:0 0 14px rgba(77,255,176,.35)}
+.nav__cmd{
+  flex:1 1 auto;min-width:0;font-family:var(--font-mono);font-size:var(--text-sm);
+  white-space:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;color:var(--mut);
+}
+.nav__cmd::-webkit-scrollbar{display:none}
+.nav__cmd .p{color:var(--em-bright);padding-right:.5ch}
+.nav__cmd a{color:var(--ink);text-decoration:none;border-bottom:1px solid var(--line-2);padding-bottom:1px;transition:border-color var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out)}
+.nav__cmd a:hover{color:var(--em-bright);border-bottom-color:var(--em-bright)}
+.nav__cmd a:active{color:var(--em-pale)}
+.nav__cta{flex:0 0 auto;padding:var(--space-xs) var(--space-md)}
+.caret{display:inline-block;width:1ch;color:var(--em-bright);animation:blink 1.05s steps(2,jump-none) infinite}
+@keyframes blink{50%{opacity:0}}
+
+/* ============================ Terminal figure (shared) ============================ */
+.term{
+  position:relative;border:var(--rule-hair) solid var(--line);border-radius:var(--r-lg);
+  background:linear-gradient(180deg,var(--panel),rgba(5,17,11,.35));
+  box-shadow:var(--panel-shadow);overflow:hidden;margin:0;
+}
+.term::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(77,255,176,.45),transparent);z-index:1}
+.term__bar{
+  display:flex;align-items:center;gap:1ch;flex-wrap:wrap;
+  font-family:var(--font-mono);font-size:var(--text-xs);color:var(--mut);
+  padding:var(--space-sm) var(--space-md);border-bottom:var(--rule-hair) solid var(--line);letter-spacing:.02em;
+}
+.term__bar b{color:var(--ink);font-weight:600}
+.term__scroll{overflow-x:auto;overflow-y:hidden}
+.term__pre{
+  font-family:var(--font-mono);font-size:var(--text-sm);line-height:1.72;
+  padding:var(--space-md);white-space:pre;color:var(--mut);tab-size:2;
+}
+.term__pre.wrapok{white-space:pre-wrap;overflow-wrap:anywhere}
+/* semantic mono colours */
+.c-em{color:var(--em-bright)} .c-pale{color:var(--em-pale)} .c-ink{color:var(--ink)}
+.c-mut{color:var(--mut)} .c-dim{color:var(--dim)} .c-wait{color:var(--waiting)}
+.c-crit{color:var(--critical)} .c-warn{color:var(--warn)}
+.ok::before{content:"✓ ";color:var(--em-bright)}
+.no::before{content:"✗ ";color:var(--critical)}
+.q::before{content:"? ";color:var(--em-pale)}
+.add{color:var(--em-pale);background:var(--add-bg);display:inline-block;width:100%}
+.del{color:var(--critical-ink);background:var(--critical-soft);display:inline-block;width:100%}
+.expl{color:var(--em-pale);background:var(--expl-bg)}
+.pbar{color:var(--em-bright)}
+.pbar i{color:var(--dim);font-style:normal}
+
+/* ============================ HERO ============================ */
+.hero{padding-block:clamp(var(--space-lg),5vw,var(--space-2xl)) clamp(var(--space-2xl),8vw,var(--space-3xl))}
+.hero__grid{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,.95fr);gap:clamp(var(--space-lg),4vw,var(--space-2xl));align-items:center}
+.hero__h1{font-family:var(--font-display);font-weight:400;font-size:var(--text-display-s);line-height:1.03;letter-spacing:.005em;color:var(--ink);overflow-wrap:anywhere;min-width:0}
+.hero__h1 em{font-style:italic;color:var(--em-pale)}
+.hero__lede{margin-top:var(--space-lg);color:var(--mut);font-size:var(--text-md);line-height:1.6;max-width:52ch}
+.hero__lede em{font-style:italic;color:var(--ink)}
+.hero__cmd{margin-top:var(--space-xl);font-family:var(--font-mono);font-size:var(--text-sm);color:var(--mut);overflow-wrap:anywhere}
+.hero__cmd code{color:var(--ink)}
+.hero__cmd .p{color:var(--em-bright)}
+.hero__cta{margin-top:var(--space-lg);display:flex;gap:var(--space-sm);flex-wrap:wrap;align-items:center}
+.hero__note{margin-top:var(--space-lg);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--mut);letter-spacing:.02em;line-height:1.6}
+
+/* ============================ THE PAIN ============================ */
+.pain{padding-block:clamp(var(--space-2xl),6vw,var(--space-3xl));border-top:var(--rule-hair) solid var(--line)}
+.pain__grid{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:clamp(var(--space-lg),4vw,var(--space-2xl));align-items:center}
+.pain__h2{font-family:var(--font-display);font-weight:400;font-size:var(--text-2xl);line-height:1.08;color:var(--ink);overflow-wrap:anywhere;min-width:0}
+.pain__h2 em{font-style:italic;color:var(--em-pale)}
+.pain__p{margin-top:var(--space-md);color:var(--mut);max-width:46ch}
+.pain__meta{margin-top:var(--space-lg);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--mut);letter-spacing:.02em}
+
+/* ============================ PIPELINE (Narrative Workflow) ============================ */
+.pipe{padding-block:clamp(var(--space-2xl),7vw,var(--space-3xl));border-top:var(--rule-hair) solid var(--line)}
+.pipe__intro{max-width:var(--measure)}
+.pipe__lead{font-family:var(--font-display);font-weight:400;font-size:var(--text-xl);line-height:1.18;color:var(--ink);margin-top:var(--space-2xs);overflow-wrap:anywhere;min-width:0}
+
+.stages{list-style:none;margin:clamp(var(--space-xl),5vw,var(--space-2xl)) 0 0;padding:0}
+.stage{padding-top:clamp(var(--space-xl),4vw,var(--space-2xl))}
+/* Narrative Workflow divider: numbered rule ABOVE the heading (number never sits beside it — gate 66) */
+.stage__rule{display:flex;align-items:center;gap:var(--space-md);margin-bottom:var(--space-md)}
+.stage__num{font-family:var(--font-mono);font-weight:600;font-size:var(--text-2xl);line-height:1;color:var(--em-bright);flex:0 0 auto;text-shadow:0 0 18px rgba(77,255,176,.3)}
+.stage__rule::after{content:"";flex:1 1 auto;height:1px;background:linear-gradient(90deg,var(--line-2),transparent)}
+.stage__kicker{font-family:var(--font-mono);font-size:var(--text-xs);font-weight:600;text-transform:uppercase;letter-spacing:.16em;line-height:1.2;color:var(--em-bright);margin:0}
+.stage__title{font-family:var(--font-display);font-weight:400;font-size:var(--text-xl);line-height:1.1;color:var(--ink);margin:var(--space-2xs) 0 0;overflow-wrap:anywhere;min-width:0}
+.stage__lede{margin-top:var(--space-sm);color:var(--mut);max-width:var(--measure)}
+.stage__lede b{color:var(--ink);font-weight:600}
+.stage__fig{margin-top:var(--space-lg)}
+.stage__fig--std{max-width:640px}
+.stage__fig--wide{max-width:100%}
+
+/* Upcoming passes (03–04): not shipped in v1 — marked in the moon-blue "waiting" hue, never asserted as present */
+.stage--next .stage__num{color:var(--waiting);text-shadow:0 0 18px rgba(106,166,255,.28)}
+.stage--next .stage__kicker{color:var(--waiting)}
+.stage__next{display:inline-block;margin-right:.6ch;font-family:var(--font-mono);font-size:var(--text-xs);font-weight:600;text-transform:uppercase;letter-spacing:.14em;line-height:1.4;color:var(--waiting);background:var(--waiting-soft);border:1px solid rgba(106,166,255,.32);border-radius:999px;padding:.1em .7em;vertical-align:middle}
+
+/* payoff — the one thing the explanation flags for a human to confirm (grafted: editorial Fig. 2 judgment) */
+.payoff{margin-top:var(--space-lg);max-width:var(--measure);display:flex;gap:var(--space-sm);align-items:baseline}
+.payoff__tag{flex:0 0 auto;font-family:var(--font-mono);font-size:var(--text-xs);font-weight:600;text-transform:uppercase;letter-spacing:.14em;line-height:1.55;color:var(--em-bright);white-space:nowrap}
+.payoff p{color:var(--mut);margin:0}
+.payoff b{color:var(--ink);font-weight:600}
+
+/* breath — one Instrument-Serif pull-quote to give the long pipeline a rhythm (grafted: editorial .pull) */
+.breath{margin:clamp(var(--space-2xl),6vw,var(--space-3xl)) 0 0;max-width:34ch;font-family:var(--font-display);font-style:italic;font-size:var(--text-2xl);line-height:1.12;color:var(--ink);overflow-wrap:anywhere;min-width:0}
+.breath .accent{color:var(--em-pale);font-style:normal}
+
+/* stage 02 — before/after reorder, internal two-column */
+.reorder{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+.reorder__col{padding:var(--space-md);overflow-x:auto}
+.reorder__col:first-child{border-right:var(--rule-hair) solid var(--line)}
+.reorder__h{font-family:var(--font-mono);font-size:var(--text-xs);text-transform:uppercase;letter-spacing:.14em;color:var(--mut);margin:0 0 var(--space-xs)}
+.reorder__h.on{color:var(--em-bright)}
+.reorder__pre{font-family:var(--font-mono);font-size:var(--text-xs);line-height:1.85;white-space:pre;margin:0}
+
+/* stage 05 — review surface, three panes (argus' own TUI content; not OS/IDE chrome) */
+.surface{display:grid;grid-template-columns:minmax(0,.8fr) minmax(0,1.5fr) minmax(0,.95fr)}
+.surface__pane{padding:var(--space-md);min-width:0}
+.surface__pane + .surface__pane{border-left:var(--rule-hair) solid var(--line)}
+.surface__label{font-family:var(--font-mono);font-size:var(--text-xs);text-transform:uppercase;letter-spacing:.14em;color:var(--mut);margin:0 0 var(--space-xs)}
+.surface__pre{font-family:var(--font-mono);font-size:var(--text-xs);line-height:1.8;white-space:pre;margin:0;overflow-x:auto}
+.surface__pre.wrap{white-space:pre-wrap;overflow-wrap:anywhere}
+.chatline{margin-top:var(--space-sm);padding-top:var(--space-sm);border-top:var(--rule-hair) solid var(--line);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--em-bright)}
+.chatline .k{color:var(--accent-ink);background:var(--em-bright);border-radius:4px;padding:var(--space-3xs) var(--space-xs);font-weight:600;margin-right:.4ch}
+.tree-open{color:var(--em-bright)}
+.tree-done{color:var(--mut)}
+.tree-done::before{content:"✓ ";color:var(--em)}
+
+/* ============================ LOCAL-FIRST statement ============================ */
+.local{padding-block:clamp(var(--space-2xl),6vw,var(--space-3xl));border-top:var(--rule-hair) solid var(--line)}
+.local__h2{font-family:var(--font-display);font-weight:400;font-size:var(--text-2xl);line-height:1.08;color:var(--ink);max-width:20ch;overflow-wrap:anywhere;min-width:0}
+.local__h2 em{font-style:italic;color:var(--em-pale)}
+.local__p{margin-top:var(--space-md);color:var(--mut);max-width:var(--measure)}
+.local__p b{color:var(--ink);font-weight:600}
+.facts{list-style:none;margin:clamp(var(--space-xl),4vw,var(--space-2xl)) 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:1px;background:var(--line);border:var(--rule-hair) solid var(--line);border-radius:var(--r-lg);overflow:hidden}
+.fact{background:var(--bg);padding:var(--space-md)}
+.fact__k{font-family:var(--font-mono);font-size:var(--text-xs);text-transform:uppercase;letter-spacing:.14em;color:var(--em-bright);margin:0 0 var(--space-xs)}
+.fact__v{color:var(--mut);font-size:var(--text-sm);line-height:1.55;margin:0}
+.fact__v b{color:var(--ink);font-weight:600}
+.fact__v .wait{color:var(--waiting);font-family:var(--font-mono)}
+
+/* ============================ INSTALL ============================ */
+.install{padding-block:clamp(var(--space-2xl),7vw,var(--space-3xl));border-top:var(--rule-hair) solid var(--line)}
+.install__grid{display:grid;grid-template-columns:minmax(0,.85fr) minmax(0,1.15fr);gap:clamp(var(--space-lg),4vw,var(--space-2xl));align-items:start}
+.install__h2{font-family:var(--font-display);font-weight:400;font-size:var(--text-2xl);line-height:1.08;color:var(--ink);overflow-wrap:anywhere;min-width:0}
+.install__p{margin-top:var(--space-md);color:var(--mut);max-width:46ch}
+.code{position:relative;border:var(--rule-hair) solid var(--line-2);border-radius:var(--r-lg);background:linear-gradient(180deg,var(--panel-2),rgba(5,17,11,.4));overflow:hidden}
+.code__row{display:flex;align-items:center;gap:1ch;padding:var(--space-md);font-family:var(--font-mono);font-size:var(--text-sm);min-width:0}
+.code__row .p{color:var(--em-bright);flex:0 0 auto}
+.code__cmd{color:var(--ink);overflow-x:auto;white-space:nowrap;scrollbar-width:none;flex:1 1 auto;min-width:0}
+.code__cmd::-webkit-scrollbar{display:none}
+.copy{
+  flex:0 0 auto;display:inline-flex;align-items:center;gap:.5ch;cursor:pointer;
+  font-family:var(--font-mono);font-size:var(--text-xs);font-weight:600;line-height:1;white-space:nowrap;
+  color:var(--mut);background:transparent;border:1px solid var(--line-2);border-radius:var(--r-sm);
+  padding:var(--space-xs) var(--space-sm);
+  transition:color var(--dur-fast) var(--ease-out),border-color var(--dur-fast) var(--ease-out),background-color var(--dur-fast) var(--ease-out);
+}
+.copy:hover{color:var(--em-bright);border-color:var(--line-3)}
+.copy:active{background:var(--panel)}
+.copy:disabled{opacity:.55;cursor:not-allowed}
+.copy[data-state="copied"]{color:var(--accent-ink);background:var(--em-bright);border-color:var(--em-bright)}
+.copy[data-state="error"]{color:var(--critical);border-color:var(--critical)}
+.install__then{margin-top:var(--space-lg);color:var(--mut);font-size:var(--text-sm)}
+
+/* itemized install requirements (grafted: product .install__reqs) */
+.reqs{list-style:none;margin:var(--space-lg) 0 0;padding:0;display:grid;gap:var(--space-sm)}
+.reqs li{display:grid;grid-template-columns:2.2rem minmax(0,1fr);gap:var(--space-sm);align-items:baseline}
+.reqs li + li{padding-top:var(--space-sm);border-top:var(--rule-hair) solid var(--line)}
+.reqs__n{font-family:var(--font-mono);font-size:var(--text-xs);font-weight:600;color:var(--em-bright);letter-spacing:.06em}
+.reqs__t{color:var(--mut);font-size:var(--text-sm);line-height:1.55}
+.reqs__t b{color:var(--ink);font-weight:600}
+.reqs__t .mono{color:var(--ink)}
+
+/* ============================ Ft4 · Dense colophon footer ============================ */
+.foot{border-top:var(--rule-hair) solid var(--line-2);padding-block:clamp(var(--space-xl),5vw,var(--space-2xl))}
+.foot__top{display:flex;align-items:center;gap:.7ch;margin-bottom:var(--space-lg)}
+.foot__word{font-family:var(--font-mono);font-weight:600;letter-spacing:.22em;color:var(--ink);font-size:var(--text-sm);text-shadow:0 0 14px rgba(77,255,176,.3)}
+.colophon{font-family:var(--font-mono);font-size:var(--text-xs);line-height:1.95;color:var(--mut);max-width:var(--measure-wide);letter-spacing:.01em}
+.colophon a{color:var(--em-bright);text-decoration:none;border-bottom:1px solid var(--line-2)}
+.colophon a:hover{border-bottom-color:var(--em-bright)}
+.colophon a:active{color:var(--em-pale)}
+.colophon b{color:var(--ink);font-weight:600}
+/* the only two colours legend (grafted: editorial colophon swatch legend) */
+.foot__legend{margin-top:var(--space-lg);padding-top:var(--space-lg);border-top:var(--rule-hair) solid var(--line);display:flex;flex-wrap:wrap;gap:var(--space-xs) var(--space-lg);align-items:center;font-family:var(--font-mono);font-size:var(--text-xs);letter-spacing:.03em;color:var(--mut)}
+.foot__legend .swatch{display:inline-flex;align-items:center;gap:var(--space-xs)}
+.foot__legend .swatch i{width:9px;height:9px;border-radius:2px;display:inline-block}
+.foot__legend .swatch .s-add{background:var(--em-bright)}
+.foot__legend .swatch .s-del{background:var(--critical)}
+.foot__sig{margin-top:var(--space-lg);font-family:var(--font-display);font-style:italic;font-size:var(--text-md);color:var(--mut)}
+
+/* ============================ Responsive ============================ */
+@media (max-width:960px){
+  .hero__grid,.pain__grid,.install__grid{grid-template-columns:minmax(0,1fr)}
+  .pain__grid .term{order:2}
+  .surface{grid-template-columns:minmax(0,1fr)}
+  .surface__pane + .surface__pane{border-left:none;border-top:var(--rule-hair) solid var(--line)}
+}
+@media (max-width:600px){
+  .hero__grid{gap:var(--space-xl)}
+  .nav__cta{display:none}
+  .reorder{grid-template-columns:minmax(0,1fr)}
+  .reorder__col:first-child{border-right:none;border-bottom:var(--rule-hair) solid var(--line)}
+}
+
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
+  .caret{opacity:1;animation:none}
+  .eye{animation:none}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<!-- N8 · Terminal-command nav -->
+<header class="nav">
+  <div class="nav__inner">
+    <a class="brand" href="#top" aria-label="Argus — home">
+      <span class="eye" aria-hidden="true"></span>
+      <span class="brand__word">argus</span>
+    </a>
+    <pre class="nav__cmd" aria-label="Section navigation"><span class="p">&gt;</span>argus <a href="#the-pain">--pain</a> <a href="#pipeline">--pipeline</a> <a href="#local">--local</a> <a href="#install">--install</a> <a href="https://github.com/ankitvashisht/argus">--source</a><span class="caret" aria-hidden="true">▮</span></pre>
+    <a class="btn btn--gem nav__cta" href="#install">Install</a>
+  </div>
+</header>
+
+<main id="main">
+
+  <!-- ============================ HERO ============================ -->
+  <section class="hero" id="top">
+    <div class="wrap">
+      <div class="hero__grid">
+        <div class="hero__lead">
+          <h1 class="hero__h1">Review the PR <em>like the author walked&nbsp;you through it.</em></h1>
+          <p class="hero__lede">Diffs tell you what changed. Argus infers <em>why</em> — then orders the files and explains every hunk in plain language, so the boilerplate is safe to skim and your judgment goes where it matters.</p>
+          <p class="hero__cmd"><code><span class="p">$</span> go install github.com/ankitvashisht/argus@latest</code></p>
+          <div class="hero__cta">
+            <a class="btn btn--gem" href="#install">Install Argus</a>
+            <a class="btn btn--ghost" href="#pipeline">See the pipeline</a>
+          </div>
+          <p class="hero__note">one Go binary · shells out to git &amp; your Claude CLI · your code never leaves the laptop</p>
+        </div>
+
+        <figure class="term" role="img" aria-label="An Argus session starting: it fetches, reads the diff locally through git, infers the change's intent from the diff and the repo files it reads for context, then writes a whole-change brief, reorders the files, and renders the explanations inline.">
+          <div class="term__bar"><span class="c-em">argus</span> <b>main…fix/redact-secret-keys</b> <span class="c-dim">·</span> <span class="c-mut">23 files</span></div>
+          <div class="term__scroll">
+<pre class="term__pre"><span class="c-em">&gt;</span> argus --fetch
+<span class="ok c-mut">fetched origin  ·  base <span class="c-ink">main</span> … head <span class="c-ink">fix/redact-secret-keys</span></span>
+<span class="ok c-mut">diff read locally · git only · <span class="c-ink">no upload · no 20k-line cap</span></span>
+<span class="c-wait">⠋</span> <span class="c-mut">inferring intent — from the diff, reading repo files for context</span>
+<span class="c-pale">“harden secret redaction before any prompt leaves the process”</span>
+<span class="ok c-mut">brief written · files reordered · explanations inline</span>
+<span class="c-em">&gt;</span> <span class="c-mut">press <span class="c-ink">c</span> to ask Claude about any line</span> <span class="caret" aria-hidden="true">▮</span></pre>
+          </div>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ THE PAIN ============================ -->
+  <section class="pain" id="the-pain">
+    <div class="wrap">
+      <div class="pain__grid">
+        <div>
+          <p class="kicker">before argus</p>
+          <h2 class="pain__h2">A 4,000-line PR and a <em>one-sentence</em> description.</h2>
+          <p class="pain__p">The diff tells you every line that moved and nothing about why. So you open files alphabetically, rebuild the author's reasoning from scratch, and hope you flag the one that matters.</p>
+          <p class="pain__meta">23 files · +1,120 −340 · which one do you even open first?</p>
+        </div>
+
+        <figure class="term" role="img" aria-label="The same change as a plain git diff stat: files listed alphabetically with change counts and no explanation of what the change is for.">
+          <div class="term__bar"><span class="c-mut">$ git diff --stat</span> <span class="c-dim">main…fix/redact-secret-keys</span></div>
+          <div class="term__scroll">
+<pre class="term__pre"> <span class="c-dim">.github/workflows/ci.yml</span>        <span class="c-dim">| 12 +-</span>
+ <span class="c-dim">CHANGELOG.md</span>                    <span class="c-dim">|  8 +</span>
+ <span class="c-mut">internal/agent/claude.go</span>        <span class="c-dim">| 14 +--</span>
+ <span class="c-mut">internal/agent/parse.go</span>         <span class="c-dim">|  9 +-</span>
+ <span class="c-mut">internal/agent/redact.go</span>        <span class="c-dim">| 22 ++--</span>
+ <span class="c-mut">internal/agent/redact_test.go</span>   <span class="c-dim">| 68 +++++</span>
+ <span class="c-mut">internal/core/orchestrator.go</span>   <span class="c-dim">| 31 ++--</span>
+ <span class="c-dim">go.sum</span>                          <span class="c-dim">| 12 +</span>
+ <span class="c-dim">… and 15 more, in whatever order git prints them</span></pre>
+          </div>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ PIPELINE ============================ -->
+  <section class="pipe" id="pipeline">
+    <div class="wrap">
+      <div class="pipe__intro">
+        <p class="kicker">how it works · the pipeline</p>
+        <h2 class="pipe__lead">Argus turns that wall of diff into a guided review. Here's the pipeline, pass by pass — the passes v1 runs today, and the two the upcoming release adds.</h2>
+      </div>
+
+      <ol class="stages">
+
+        <!-- 00 -->
+        <li class="stage">
+          <div class="stage__rule" aria-hidden="true"><span class="stage__num">00</span></div>
+          <p class="stage__kicker">point it at a branch</p>
+          <h3 class="stage__title">One binary, your machine, your subscription.</h3>
+          <p class="stage__lede">Run <b>argus</b> in any git repo and confirm the base and head. It reads the diff locally through git — no GitHub dependency, no upload, and none of GitHub's 20k-line API cap — shelling out to your already-authenticated Claude CLI for the thinking.</p>
+          <figure class="stage__fig stage__fig--std">
+            <div class="term" role="img" aria-label="Argus confirming the base and head branch before reading the diff locally through git.">
+              <div class="term__scroll">
+<pre class="term__pre"><span class="c-em">&gt;</span> argus
+  base <span class="c-ink">‹ main ›</span>        head <span class="c-ink">‹ fix/redact-secret-keys ›</span>
+  <span class="c-mut">reads the diff locally · no server · no per-seat SaaS</span>
+  <span class="c-dim">enter to review</span> <span class="c-em">↵</span></pre>
+              </div>
+            </div>
+          </figure>
+        </li>
+
+        <!-- 01 -->
+        <li class="stage">
+          <div class="stage__rule" aria-hidden="true"><span class="stage__num">01</span></div>
+          <p class="stage__kicker">infer the intent</p>
+          <h3 class="stage__title">Reviews against intent, not guesses.</h3>
+          <p class="stage__lede">Argus infers what the change is actually <b>for</b> — from the diff itself and the repo files it reads for context — and grounds every explanation in that intent, so a deliberate choice reads as intentional instead of being mistaken for a slip. It reads past the diff for what the diff alone can't show: where moved code went, and what later code leans on it.</p>
+          <figure class="stage__fig stage__fig--std">
+            <div class="term" role="img" aria-label="Argus's inferred intent for the change, what it read to infer it, and how it grounds every explanation in that intent.">
+              <div class="term__bar"><span class="c-em">intent</span> <span class="c-dim">·</span> <span class="c-mut">inferred</span></div>
+              <div class="term__scroll">
+<pre class="term__pre wrapok"><span class="c-pale">“harden secret redaction before any prompt leaves the
+ process — mask hyphen-delimited keys like x-api-key, and
+ stop a `==` comparison losing its operator.”</span>
+<span class="c-dim">from</span>  the diff · repo files it reads for context
+<span class="c-dim">so</span>    every explanation is grounded in this intent, not a guess</pre>
+              </div>
+            </div>
+          </figure>
+        </li>
+
+        <!-- 02 -->
+        <li class="stage">
+          <div class="stage__rule" aria-hidden="true"><span class="stage__num">02</span></div>
+          <p class="stage__kicker">a reading order, not an alphabet</p>
+          <h3 class="stage__title">Read it in the order it was built.</h3>
+          <p class="stage__lede">Before you read a line, Argus writes a whole-change brief and reorders the file tree into a dependency-sensible path — entry points and core logic first, generated files and lockfiles last.</p>
+          <figure class="stage__fig stage__fig--std">
+            <div class="term" role="img" aria-label="The file list reordered from alphabetical into a dependency-sensible reading order: entry point and core logic first, the lockfile marked to skip, last.">
+              <div class="reorder">
+                <div class="reorder__col">
+                  <p class="reorder__h">alphabetical</p>
+<pre class="reorder__pre"><span class="c-dim">CHANGELOG.md
+go.sum
+agent/claude.go
+agent/redact.go
+core/orchestrator.go
+ui/review.go
+…</span></pre>
+                </div>
+                <div class="reorder__col">
+                  <p class="reorder__h on">argus reading order</p>
+<pre class="reorder__pre"><span class="c-ink">core/orchestrator.go</span> <span class="c-em">entry</span>
+<span class="c-ink">agent/redact.go</span>      <span class="c-mut">core</span>
+<span class="c-ink">agent/claude.go</span>      <span class="c-mut">agent</span>
+<span class="c-ink">ui/review.go</span>         <span class="c-mut">surface</span>
+<span class="c-dim">…</span>
+<span class="c-dim">go.sum        skip · lockfile</span></pre>
+                </div>
+              </div>
+            </div>
+          </figure>
+        </li>
+
+        <!-- 03 · upcoming -->
+        <li class="stage stage--next">
+          <div class="stage__rule" aria-hidden="true"><span class="stage__num">03</span></div>
+          <p class="stage__kicker"><span class="stage__next">Upcoming release</span> review every file, then refute it</p>
+          <h3 class="stage__title">Findings that survive a pass built to disprove them.</h3>
+          <p class="stage__lede">The upcoming release runs correctness, security, and test lenses over every file, then an adversarial self-check pass that tries to <b>refute</b> each finding and drops the ones that don't survive — so what stays flagged is worth your attention, and the rest is safe to skim.</p>
+          <figure class="stage__fig stage__fig--std">
+            <div class="term" role="img" aria-label="Upcoming: a preview of the self-check pass — one finding is kept because it survived, and one is dropped because the self-check refuted it.">
+              <div class="term__bar"><span class="c-wait">lenses</span> <span class="c-mut">correctness · security · tests</span> <span class="c-dim">· preview</span></div>
+              <div class="term__scroll">
+<pre class="term__pre wrapok"><span class="ok c-mut"><span class="c-ink">kept</span>    redact.go:61 — widened key class could over-mask a value that merely contains “key”</span>
+<span class="no c-mut"><span class="c-dim">dropped</span> claude.go:88 — “unchecked error”; self-check: it's wrapped above. refuted.</span>
+<span class="c-dim">what stays flagged will survive a pass built to disprove it.</span></pre>
+              </div>
+            </div>
+          </figure>
+        </li>
+
+        <!-- 04 · upcoming -->
+        <li class="stage stage--next">
+          <div class="stage__rule" aria-hidden="true"><span class="stage__num">04</span></div>
+          <p class="stage__kicker"><span class="stage__next">Upcoming release</span> run your actual tests</p>
+          <h3 class="stage__title">The repo's own tests, turned into findings.</h3>
+          <p class="stage__lede">The upcoming release auto-detects and runs the repo's own test, lint, and build commands, turns real failures into findings, and flags a change that ships <b>no</b> tests as a risk of its own.</p>
+          <figure class="stage__fig stage__fig--std">
+            <div class="term" role="img" aria-label="Upcoming: a preview of Argus running the repo's own build and tests — the build passes, a test fails and becomes a finding, and a file with no test coverage is flagged as its own risk.">
+              <div class="term__bar"><span class="c-wait">tests</span> <span class="c-mut">detected · go test ./… · golangci-lint · go build</span> <span class="c-dim">· preview</span></div>
+              <div class="term__scroll">
+<pre class="term__pre wrapok"><span class="ok c-mut">go build                     ok</span>
+<span class="no c-mut">go test ./internal/agent     <span class="c-crit">FAIL</span>  redact_test.go:141 → finding</span>
+<span class="c-warn">!</span> <span class="c-mut">no test touches parse.go — shipping untested · flagged as its own risk</span></pre>
+              </div>
+            </div>
+          </figure>
+        </li>
+
+        <!-- 05 -->
+        <li class="stage">
+          <div class="stage__rule" aria-hidden="true"><span class="stage__num">05</span></div>
+          <p class="stage__kicker">the review surface</p>
+          <h3 class="stage__title">Explanations inline, Claude a keystroke away.</h3>
+          <p class="stage__lede">Why-it-changed explanations render directly above each hunk (marked <span class="mono c-em">▌</span> so they're never mistaken for a <span class="mono">+/−</span> line), the file tree keeps the dependency-sensible reading order with generated files and lockfiles pushed last, and a streaming Claude chat is one keystroke away for any line you don't follow — in the terminal today, in a local web UI next.</p>
+          <figure class="stage__fig stage__fig--wide">
+            <div class="term" role="img" aria-label="The Argus review surface: a reordered file tree on the left with reviewed files checked, the diff in the centre showing the real redact.go change with an inline AI explanation above the hunk, and a notes pane on the right showing the whole-change brief, this file's role, and a prompt to press c to ask Claude. The status bar shows the wired keybindings.">
+              <div class="term__bar"><span class="c-em">argus</span> <b>redact.go</b> <span class="c-dim">·</span> <span class="pbar">▓▓▓▓▓▓░░░░ <i>12/23 reviewed</i></span> <span class="c-dim">·</span> <span class="c-mut">j/k move · space ✓ reviewed · c ask claude · v split · q quit</span></div>
+              <div class="surface">
+                <div class="surface__pane">
+                  <p class="surface__label">files · reordered</p>
+<pre class="surface__pre"><span class="tree-done">orchestrator.go</span>
+<span class="tree-done">claude.go</span>
+<span class="tree-open">▸ redact.go</span>
+  redact_test.go
+  parse.go
+<span class="c-dim">  …
+  go.sum  lockfile</span></pre>
+                </div>
+                <div class="surface__pane">
+                  <p class="surface__label">diff · why it changed</p>
+<pre class="surface__pre wrap"><span class="expl">▌ the value pattern now refuses a leading
+▌ “=”, so a “==” comparison's second “=”
+▌ isn't swallowed — “if password == x”
+▌ stopped becoming “if password =[REDACTED] x”.</span>
+<span class="c-dim">@@ internal/agent/redact.go · assignmentRule</span>
+<span class="c-mut">  …secret|api[-_]?key|access[-_]?key…</span>
+<span class="del">- )("[^"]+"|'[^']+'|[^"'\s,}]+)</span>
+<span class="add">+ )("[^"]+"|'[^']+'|[^"'\s,}=][^"'\s,}]*)</span></pre>
+                </div>
+                <div class="surface__pane">
+                  <p class="surface__label">notes</p>
+<pre class="surface__pre wrap"><span class="c-dim">brief</span>
+<span class="c-mut">harden secret redaction before any
+prompt leaves the process.</span>
+
+<span class="c-dim">this file · redact.go</span>
+<span class="c-mut">the agent path's last mask
+before Claude sees the diff.</span></pre>
+                  <p class="chatline"><span class="k">c</span>ask Claude about any line<span class="caret" aria-hidden="true">▮</span></p>
+                </div>
+              </div>
+            </div>
+          </figure>
+          <div class="payoff">
+            <span class="payoff__tag">needs you</span>
+            <p>The explanation puts the one thing worth confirming right in front of you: check that the widened key class won't mask a legitimate value that just happens to contain <b>“key”</b>. Everything else in the file is safe to skim.</p>
+          </div>
+        </li>
+
+      </ol>
+
+      <!-- one typographic breath, in the brand's display face -->
+      <p class="breath">Once you know why a change was made, <span class="accent">most of the diff is safe to skim.</span></p>
+    </div>
+  </section>
+
+  <!-- ============================ LOCAL-FIRST ============================ -->
+  <section class="local" id="local">
+    <div class="wrap">
+      <p class="kicker">the trade-off</p>
+      <h2 class="local__h2">It runs on your machine. Not in <em>someone else's cloud.</em></h2>
+      <p class="local__p">Argus is a single Go binary that shells out to git and your authenticated Claude CLI — the opposite trade from cloud review bots like <b>CodeRabbit</b> and <b>Greptile</b>, which read your PR on someone else's servers. It infers intent, explains why each change was made, and hands a human a guided reading order instead of a wall of diff.</p>
+      <ul class="facts">
+        <li class="fact"><p class="fact__k">no upload</p><p class="fact__v"><b>Your code never leaves the laptop.</b> No server, no third-party service.</p></li>
+        <li class="fact"><p class="fact__k">your subscription</p><p class="fact__v">Drives the <b>Claude CLI</b> you already pay for. No per-seat SaaS.</p></li>
+        <li class="fact"><p class="fact__k">no api cap</p><p class="fact__v">Reads the diff locally through git — so GitHub's <b>20k-line</b> API diff cap never applies.</p></li>
+        <li class="fact"><p class="fact__k">stop &amp; resume</p><p class="fact__v">Quit any time; your progress and cached explanations persist, so you <span class="wait">pick up</span> where you left off.</p></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ============================ INSTALL ============================ -->
+  <section class="install" id="install">
+    <div class="wrap">
+      <div class="install__grid">
+        <div>
+          <p class="kicker">install</p>
+          <h2 class="install__h2">One command. Then run it in any repo.</h2>
+          <p class="install__p">The diff viewer works on its own; the AI passes need the Claude CLI installed and authenticated. A Homebrew tap and prebuilt binaries are on the way.</p>
+        </div>
+        <div>
+          <div class="code">
+            <div class="code__row">
+              <span class="p" aria-hidden="true">$</span>
+              <span class="code__cmd">go install github.com/ankitvashisht/argus@latest</span>
+              <button class="copy" type="button" data-copy="go install github.com/ankitvashisht/argus@latest" aria-label="Copy install command"><span class="copy__label">copy</span></button>
+            </div>
+          </div>
+          <ol class="reqs">
+            <li><span class="reqs__n">01</span><span class="reqs__t"><b>Go 1.22+</b> — builds and installs the single static binary.</span></li>
+            <li><span class="reqs__n">02</span><span class="reqs__t"><b>git</b> on your <span class="mono">PATH</span> — Argus shells out to it to read the diff locally.</span></li>
+            <li><span class="reqs__n">03</span><span class="reqs__t"><b>Claude CLI</b>, installed and authenticated — the AI passes run on the subscription you already have.</span></li>
+            <li><span class="reqs__n">04</span><span class="reqs__t"><b>v1 is the terminal tool</b> that explains a diff — the upcoming release turns that surface into the finish line of a full local review pipeline, with a local web UI.</span></li>
+          </ol>
+          <p class="install__then"><span class="mono c-em">&gt;</span> then run <span class="mono c-ink">argus</span> inside any git repository.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- Ft4 · Dense colophon footer -->
+<footer class="foot">
+  <div class="wrap">
+    <div class="foot__top">
+      <span class="eye" aria-hidden="true"></span>
+      <span class="foot__word">argus</span>
+    </div>
+    <p class="colophon">The local-first AI code reviewer that <b>explains</b> why a change was made and <b>guides</b> your review of it. A single Go binary; drives your own <b>Claude CLI</b>; your code never leaves the machine. v1 is the terminal tool that explains a diff — the upcoming release turns that explain surface into the finish line of a full local review pipeline with a local web UI. Source, issues, and install at <a href="https://github.com/ankitvashisht/argus">github.com/ankitvashisht/argus</a>. Set in <b>Instrument Serif</b>, <b>Schibsted Grotesk</b>, and <b>JetBrains Mono</b>. Requires Go 1.22+, git, and an authenticated Claude CLI.</p>
+    <p class="foot__legend">
+      <span>The only two colours on this page —</span>
+      <span class="swatch"><i class="s-add" aria-hidden="true"></i> the green of an addition</span>
+      <span class="swatch"><i class="s-del" aria-hidden="true"></i> the red of a deletion</span>
+    </p>
+    <p class="foot__sig">Argus Panoptes — the hundred-eyed watchman.</p>
+  </div>
+</footer>
+
+<script>
+/* Minimal, justified interaction: copy the install command (an invisible effect → honest confirmation). */
+(function(){
+  var btns=document.querySelectorAll('.copy[data-copy]');
+  btns.forEach(function(b){
+    b.addEventListener('click',function(){
+      var text=b.getAttribute('data-copy');
+      var label=b.querySelector('.copy__label');
+      var restore=function(){b.setAttribute('data-state','');label.textContent='copy';};
+      var ok=function(){b.setAttribute('data-state','copied');label.textContent='copied';setTimeout(restore,1600);};
+      var fail=function(){b.setAttribute('data-state','error');label.textContent='press ⌘C';setTimeout(restore,2000);};
+      if(navigator.clipboard&&navigator.clipboard.writeText){
+        navigator.clipboard.writeText(text).then(ok).catch(fail);
+      }else{fail();}
+    });
+  });
+})();
+</script>
+</body>
+</html>
