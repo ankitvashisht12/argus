@@ -409,8 +409,8 @@ a{color:inherit}
       <div class="hero__grid">
         <div class="hero__lead">
           <h1 class="hero__h1">Review the PR <em>like the author walked&nbsp;you through it.</em></h1>
-          <p class="hero__lede">Diffs tell you what changed. Argus reviews the PR through a <em>skeptic's</em> lens — every hunk gets a <em>why it changed</em> and a <em>look out for</em> note, right where you read the diff in VS Code.</p>
-          <p class="hero__cmd"><a href="https://marketplace.visualstudio.com/items?itemName=ankitvashisht12.argus-review"><code><span class="p">&gt;</span> code --install argus</code></a></p>
+          <p class="hero__lede">Diffs tell you what changed. Argus reviews the PR through a <em>skeptic's</em> lens — a <em>why it changed</em> and <em>look out for</em> note on every hunk, and it reports any hunk it couldn't cover, right where you read the diff in VS Code.</p>
+          <p class="hero__cmd"><a href="https://marketplace.visualstudio.com/items?itemName=ankitvashisht12.argus-review"><code><span class="p">&gt;</span> code --install-extension ankitvashisht12.argus-review</code></a></p>
           <div class="hero__cta">
             <a class="btn btn--gem" href="https://marketplace.visualstudio.com/items?itemName=ankitvashisht12.argus-review">Install for VS Code</a>
             <a class="btn btn--ghost" href="#pipeline">See the pipeline</a>
@@ -418,12 +418,12 @@ a{color:inherit}
           <p class="hero__note">one VS Code extension · drives your own gh &amp; Claude CLIs · your code never leaves the laptop</p>
         </div>
 
-        <figure class="term" role="img" aria-label="An Argus review starting inside VS Code: the command palette runs ARGUS: Review PR, it fetches the GitHub PR through the gh CLI, opens every diff so you can start reading immediately, then streams the skeptic review — a why-it-changed and look-out-for note anchored to each hunk — and readies the Overview tab and chat panel.">
+        <figure class="term" role="img" aria-label="An Argus review starting inside VS Code: the command palette runs ARGUS: Review PR, it fetches the GitHub PR through the gh CLI, opens the Changed Files tree and Overview so you can start reading immediately — click any file to open its diff — then streams the skeptic review, a why-it-changed and look-out-for note anchored to each hunk, and readies the chat panel.">
           <div class="term__bar"><span class="c-em">argus</span> <b>acme/api#482</b> <span class="c-dim">·</span> <span class="c-mut">23 files</span></div>
           <div class="term__scroll">
 <pre class="term__pre"><span class="c-em">⌘⇧P</span> ARGUS: Review PR…
 <span class="ok c-mut">fetched <span class="c-ink">acme/api#482</span> via your gh CLI · <span class="c-ink">nothing uploaded</span></span>
-<span class="ok c-mut">23 files · diffs open · <span class="c-ink">start reading now</span></span>
+<span class="ok c-mut">tree + overview ready · <span class="c-ink">click a file to start reading</span></span>
 <span class="c-wait">⠋</span> <span class="c-mut">skeptic review streaming — why it changed · look out for</span>
 <span class="c-pale">“harden secret redaction before any prompt leaves the process”</span>
 <span class="ok c-mut">overview ready · notes anchored to each hunk</span>
@@ -516,16 +516,16 @@ a{color:inherit}
           <div class="stage__rule" aria-hidden="true"><span class="stage__num">02</span></div>
           <p class="stage__kicker">files first, review streams in</p>
           <h3 class="stage__title">Start reading before the AI does.</h3>
-          <p class="stage__lede">The Changed Files tree and every diff open <b>immediately</b> — you never wait on the model to start reading. The skeptic notes stream in behind a status indicator and attach to each hunk as they land, so nothing blocks.</p>
+          <p class="stage__lede">The Changed Files tree and the Overview open <b>instantly</b> — click any file to start reading its diff, no waiting on the model. The skeptic notes stream in behind a status indicator and attach to each hunk as they land, so nothing blocks.</p>
           <figure class="stage__fig stage__fig--std">
-            <div class="term" role="img" aria-label="Progressive loading: on open the files tree and diffs are ready while notes are still streaming, and moments later each file has its why-it-changed and look-out-for notes attached and the Overview tab is ready.">
+            <div class="term" role="img" aria-label="Progressive loading: on open the files tree and Overview are ready and you click a file to open its diff, while notes are still streaming, and moments later each file has its why-it-changed and look-out-for notes attached.">
               <div class="reorder">
                 <div class="reorder__col">
                   <p class="reorder__h on">on open</p>
 <pre class="reorder__pre"><span class="c-ink">files tree</span>   <span class="c-mut">ready</span>
-<span class="c-ink">diffs</span>        <span class="c-mut">open</span>
-<span class="c-ink">notes</span>        <span class="c-wait">⠋ streaming…</span>
-<span class="c-dim">overview</span>     <span class="c-wait">⠋</span></pre>
+<span class="c-ink">overview</span>     <span class="c-mut">ready</span>
+<span class="c-ink">diff</span>         <span class="c-mut">click a file</span>
+<span class="c-ink">notes</span>        <span class="c-wait">⠋ streaming…</span></pre>
                 </div>
                 <div class="reorder__col">
                   <p class="reorder__h on">moments later</p>
@@ -545,10 +545,10 @@ a{color:inherit}
           <div class="stage__rule" aria-hidden="true"><span class="stage__num">03</span></div>
           <p class="stage__kicker">the reviewer-skeptic lens</p>
           <h3 class="stage__title">Every hunk: why it changed, and what to watch.</h3>
-          <p class="stage__lede">For each hunk Argus asks the two questions a careful reviewer would — <b>why this change</b>, in plain language, and <b>look out for</b>: what could go wrong, what to double-check, what the author may have missed. They render as native comment threads on the diff, tagged by importance.</p>
+          <p class="stage__lede">For each hunk Argus asks the two questions a careful reviewer would — <b>why this change</b>, in plain language, and <b>look out for</b>: what could go wrong, what to double-check, what the author may have missed. They render as native comment threads on the diff, tagged by importance — and Argus reports any hunk it couldn't cover, so a gap never passes for a clean bill.</p>
           <figure class="stage__fig stage__fig--std">
             <div class="term" role="img" aria-label="A per-hunk comment thread: a why-this-change note explaining the diff in plain language, and a look-out-for note flagging the one thing worth confirming.">
-              <div class="term__bar"><span class="c-em">thread</span> <span class="c-mut">redact.go · hunk 1</span> <span class="c-dim">· importance: review</span></div>
+              <div class="term__bar"><span class="c-em">thread</span> <span class="c-mut">redact.go · hunk 1</span> <span class="c-dim">· importance: critical</span></div>
               <div class="term__scroll">
 <pre class="term__pre wrapok"><span class="c-em">▌ why this change</span>
 <span class="c-mut">  refuses a leading “=”, so “if x == y” no longer
@@ -566,7 +566,7 @@ a{color:inherit}
           <div class="stage__rule" aria-hidden="true"><span class="stage__num">04</span></div>
           <p class="stage__kicker">the overview tab</p>
           <h3 class="stage__title">The whole PR, before the first hunk.</h3>
-          <p class="stage__lede">One tab frames the change: a plain-language <b>summary</b>, the explicit <b>intent</b>, the <b>critical things</b> to verify before approving, and an <b>understand-the-flow</b> walkthrough end to end. A streaming chat panel sits alongside for anything you don't follow, scoped to the file you have open.</p>
+          <p class="stage__lede">One tab frames the change: a plain-language <b>summary</b>, the explicit <b>intent</b>, the <b>critical things</b> to verify before approving, and an <b>understand-the-flow</b> walkthrough end to end. A streaming chat panel you can dock beside your diff handles anything you don't follow, scoped to the file you have open.</p>
           <figure class="stage__fig stage__fig--std">
             <div class="term" role="img" aria-label="The Overview tab for a PR: a summary line, the intent, the critical things to verify, and an understand-the-flow narrative walking the change end to end.">
               <div class="term__bar"><span class="c-em">overview</span> <span class="c-mut">acme/api#482</span></div>
@@ -647,7 +647,7 @@ a{color:inherit}
         <li class="fact"><p class="fact__k">no upload</p><p class="fact__v"><b>Your code never leaves the machine.</b> No Argus cloud, no third-party service.</p></li>
         <li class="fact"><p class="fact__k">your subscription</p><p class="fact__v">Drives the <b>Claude</b> CLI you already have. No per-seat SaaS.</p></li>
         <li class="fact"><p class="fact__k">degrades gracefully</p><p class="fact__v">Diff, files, and GitHub submission work even <b>without Claude</b> — the AI notes just wait, and regenerate later.</p></li>
-        <li class="fact"><p class="fact__k">stop &amp; resume</p><p class="fact__v">Reviewed-state and draft comments persist across window reloads, so you <span class="wait">pick up</span> where you left off.</p></li>
+        <li class="fact"><p class="fact__k">stop &amp; resume</p><p class="fact__v">Reviewed-state and chat history persist across window reloads, so you <span class="wait">pick up</span> where you left off.</p></li>
       </ul>
     </div>
   </section>
@@ -693,7 +693,7 @@ a{color:inherit}
       <span class="eye" aria-hidden="true"></span>
       <span class="foot__word">argus</span>
     </div>
-    <p class="colophon">The local-first AI PR reviewer for VS Code that <b>reviews</b> a GitHub PR through a skeptic's lens and <b>guides</b> your review of it — a why-it-changed and look-out-for note on every hunk, plus an Overview tab for the PR's intent and critical things to know. A single VS Code extension; drives your own <b>gh</b> and <b>Claude</b> CLIs; your code never leaves the machine. VS Code is the first shipped face of the engine, with a terminal TUI, web, and desktop app in progress. Get it on the <a href="https://marketplace.visualstudio.com/items?itemName=ankitvashisht12.argus-review">VS Code Marketplace</a>; source and issues at <a href="https://github.com/ankitvashisht12/argus">github.com/ankitvashisht12/argus</a>. Built by <a href="https://ankitvashisht.in">Ankit Vashisht</a>. Set in <b>Instrument Serif</b>, <b>Schibsted Grotesk</b>, and <b>JetBrains Mono</b>. Requires VS Code 1.90+, an authenticated gh CLI, and a logged-in Claude CLI for the AI review.</p>
+    <p class="colophon">The local-first AI PR reviewer for VS Code that <b>reviews</b> a GitHub PR through a skeptic's lens and <b>guides</b> your review of it — a why-it-changed and look-out-for note on every hunk — and it reports any hunk it couldn't cover — plus an Overview tab for the PR's intent and critical things to know. A single VS Code extension; drives your own <b>gh</b> and <b>Claude</b> CLIs; your code never leaves the machine. VS Code is the first shipped face of the engine, with a terminal TUI, web, and desktop app in progress. Get it on the <a href="https://marketplace.visualstudio.com/items?itemName=ankitvashisht12.argus-review">VS Code Marketplace</a>; source and issues at <a href="https://github.com/ankitvashisht12/argus">github.com/ankitvashisht12/argus</a>. Built by <a href="https://ankitvashisht.in">Ankit Vashisht</a>. Set in <b>Instrument Serif</b>, <b>Schibsted Grotesk</b>, and <b>JetBrains Mono</b>. Requires VS Code 1.90+, an authenticated gh CLI, and a logged-in Claude CLI for the AI review.</p>
     <p class="foot__legend">
       <span>The only two colours on this page —</span>
       <span class="swatch"><i class="s-add" aria-hidden="true"></i> the green of an addition</span>
