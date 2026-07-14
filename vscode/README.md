@@ -19,6 +19,7 @@ no separate web UI or TUI.
 
 ## Requirements
 
+- **VS Code** ≥ 1.90.
 - [`gh`](https://cli.github.com) — the GitHub CLI, installed and authenticated
   (`gh auth login`). Required to fetch PRs and submit reviews.
 - [Claude Code](https://claude.com/claude-code) (`claude`) — optional. Without it

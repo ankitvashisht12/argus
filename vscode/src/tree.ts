@@ -46,10 +46,6 @@ export const OPEN_DIFF_COMMAND = 'argus.openDiff';
  * argument, either a file {@link TreeNode} (when fired from the tree's
  * context/inline menu), a path `string`, or nothing (falls back to the tree
  * selection, then the active `argus://` diff editor).
- *
- * NOTE for the integrator: `extension.ts` currently registers a placeholder
- * `argus.toggleReviewed` handler. Remove that placeholder when wiring
- * {@link registerTree}, otherwise `registerCommand` throws on the duplicate id.
  */
 export const TOGGLE_REVIEWED_COMMAND = 'argus.toggleReviewed';
 

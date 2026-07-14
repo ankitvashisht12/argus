@@ -13,11 +13,9 @@
  *     `prMeta` probe, and return the identity for the integrator's session
  *     loader (`argus.reviewPr`).
  *
- * Draft comments come from `comments.ts`. That surface's stub does not yet
- * declare an export for them, so — per the "declare the cross-surface contract
- * in your own file" rule — this module defines the {@link DraftComment} shape it
- * consumes and a one-time {@link connectDrafts} hook the integrator calls to
- * bridge `comments.ts` → this flow (see the integrator note at the bottom).
+ * Draft comments come from `comments.ts`: this module defines the
+ * {@link DraftComment} shape it consumes, and `extension.ts` bridges the two
+ * surfaces at activation via the one-time {@link connectDrafts} hook.
  *
  * @module
  */

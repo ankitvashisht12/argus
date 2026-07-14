@@ -41,9 +41,8 @@ export type DraftSide = 'base' | 'head';
 /**
  * A single user draft comment, flattened from the draft-thread registry.
  *
- * NOTE FOR INTEGRATOR: github.ts imports `{ getDraftComments, clearDrafts }`
- * from this module (the stub's TSDoc references "draft comment threads (from
- * comments.ts)"). These are the concrete exports it should use.
+ * Consumed by `github.ts` via {@link getDraftComments} / {@link clearDrafts}
+ * (bridged in `extension.ts` at activation).
  */
 export interface DraftComment {
   /** Head- or base-side file path the comment targets. */
