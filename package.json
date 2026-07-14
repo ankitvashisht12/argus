@@ -1,0 +1,17 @@
+{
+  "name": "argus-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ARGUS — AI-first PR review for VS Code",
+  "license": "MIT",
+  "author": "Ankit Vashisht",
+  "workspaces": [
+    "engine",
+    "vscode"
+  ],
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present"
+  }
+}

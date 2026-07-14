@@ -5,9 +5,10 @@
 - Contract: docs/loop/contract.md
 - Repo renamed (argus-go = old Go repo; this repo = argus monorepo)
 - codiff reference clone: /private/tmp/claude-501/-Users-ankitvashisht-Personal-hunker/33624f30-a603-47e2-9336-48dc2a234187/scratchpad/codiff
+- Engine: diff parser, claude adapter, gh client, review pipeline, cache — integrated, full public barrel, 95/95 tests green, tsc clean, no vscode imports
 
 ## Doing
-- Phase 1: scaffold monorepo + engine (diff, agent, github, review, store) + tests
+- Phase 2: vscode extension surfaces (tree, diff, comments, webviews)
 
 ## Next
 - Phase 2: vscode extension surfaces (tree, diff, comments, webviews)
