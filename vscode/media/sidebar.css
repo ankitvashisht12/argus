@@ -1,0 +1,235 @@
+/* ARGUS sidebar webview — theme-aware via VS Code CSS variables. */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  color: var(--vscode-foreground);
+  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size, 13px);
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* --- Details panel ------------------------------------------------------- */
+
+.details {
+  flex: 0 0 auto;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+}
+
+.details .title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.details .subtitle,
+.details .meta {
+  margin-top: 3px;
+  font-size: 0.9em;
+  opacity: 0.75;
+  overflow-wrap: anywhere;
+}
+
+.details .role {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.85em;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+}
+
+.details .note {
+  margin-top: 6px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.details .reviewed {
+  margin-left: 6px;
+  color: var(--vscode-charts-green, var(--vscode-terminal-ansiGreen, #3fb950));
+  font-size: 0.85em;
+}
+
+.details .empty {
+  opacity: 0.85;
+}
+
+.details button.link {
+  margin-top: 8px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.details button.link:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+/* --- Chat log ------------------------------------------------------------ */
+
+.log {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.msg {
+  max-width: 100%;
+  padding: 7px 10px;
+  border-radius: 8px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.msg.user {
+  align-self: flex-end;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.msg.assistant {
+  align-self: flex-start;
+  background: var(--vscode-input-background, rgba(128, 128, 128, 0.12));
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
+}
+
+.msg.error {
+  align-self: flex-start;
+  background: var(--vscode-inputValidation-errorBackground, rgba(190, 40, 40, 0.2));
+  border: 1px solid var(--vscode-inputValidation-errorBorder, #be3030);
+  color: var(--vscode-foreground);
+}
+
+.msg .cursor {
+  display: inline-block;
+  width: 6px;
+  animation: blink 1s step-start infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.msg p {
+  margin: 0 0 6px;
+}
+
+.msg p:last-child {
+  margin-bottom: 0;
+}
+
+.msg pre {
+  margin: 6px 0;
+  padding: 8px;
+  overflow-x: auto;
+  border-radius: 6px;
+  background: var(--vscode-textCodeBlock-background, rgba(128, 128, 128, 0.15));
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.92em;
+}
+
+.msg code {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.92em;
+}
+
+.msg :not(pre) > code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--vscode-textCodeBlock-background, rgba(128, 128, 128, 0.18));
+}
+
+.log .placeholder {
+  margin: auto;
+  text-align: center;
+  opacity: 0.6;
+}
+
+/* --- Composer ------------------------------------------------------------ */
+
+.composer {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+  padding: 8px 10px;
+  border-top: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+}
+
+.composer textarea {
+  flex: 1 1 auto;
+  resize: none;
+  max-height: 40vh;
+  padding: 6px 8px;
+  border-radius: 4px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, transparent);
+  font-family: inherit;
+  font-size: inherit;
+  line-height: 1.4;
+}
+
+.composer textarea:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
+.composer textarea:disabled {
+  opacity: 0.6;
+}
+
+.composer button {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.composer button:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.composer button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+#stop {
+  color: var(--vscode-button-secondaryForeground, var(--vscode-button-foreground));
+  background: var(--vscode-button-secondaryBackground, var(--vscode-button-background));
+}

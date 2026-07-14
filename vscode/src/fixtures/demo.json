@@ -1,0 +1,163 @@
+{
+  "meta": {
+    "owner": "acme",
+    "repo": "widgets",
+    "number": 482,
+    "title": "Refresh auth tokens before expiry instead of on 401",
+    "body": "Our API client currently only refreshes the access token *after* a request fails with 401, which causes a user-visible retry latency spike and, under concurrency, a thundering-herd of refresh calls. This PR proactively refreshes the token when it is within 60s of expiry, guards concurrent refreshes with a single in-flight promise, and adds coverage for the race. Docs updated with the new env var.",
+    "baseSha": "9f3c1aa0000000000000000000000000deadbeef",
+    "headSha": "a1b2c3d4e5f60000000000000000000000c0ffee",
+    "baseRef": "main",
+    "headRef": "feat/proactive-token-refresh",
+    "author": "dana-eng"
+  },
+  "files": [
+    {
+      "path": "src/auth/token.ts",
+      "status": "modified",
+      "additions": 22,
+      "deletions": 6,
+      "hunks": [
+        {
+          "id": "src/auth/token.ts:a1b2c3d4e5f60000000000000000000000c0ffee:h1",
+          "oldStart": 12,
+          "oldLines": 8,
+          "newStart": 12,
+          "newLines": 20,
+          "patch": "@@ -12,8 +12,20 @@ export class TokenManager {\n-  async getToken(): Promise<string> {\n-    if (this.expired()) {\n-      return this.refresh();\n-    }\n-    return this.accessToken;\n+  private refreshInFlight: Promise<string> | null = null;\n+\n+  async getToken(): Promise<string> {\n+    if (this.nearExpiry()) {\n+      return this.refreshOnce();\n+    }\n+    return this.accessToken;\n+  }\n+\n+  private refreshOnce(): Promise<string> {\n+    if (!this.refreshInFlight) {\n+      this.refreshInFlight = this.refresh().finally(() => {\n+        this.refreshInFlight = null;\n+      });\n+    }\n+    return this.refreshInFlight;\n   }"
+        },
+        {
+          "id": "src/auth/token.ts:a1b2c3d4e5f60000000000000000000000c0ffee:h2",
+          "oldStart": 34,
+          "oldLines": 4,
+          "newStart": 46,
+          "newLines": 8,
+          "patch": "@@ -34,4 +46,8 @@ export class TokenManager {\n-  private expired(): boolean {\n-    return Date.now() >= this.expiresAt;\n-  }\n+  private nearExpiry(): boolean {\n+    const skewMs = Number(process.env.ARGUS_TOKEN_SKEW_MS ?? 60_000);\n+    return Date.now() >= this.expiresAt - skewMs;\n+  }"
+        }
+      ]
+    },
+    {
+      "path": "src/auth/token.test.ts",
+      "status": "added",
+      "additions": 18,
+      "deletions": 0,
+      "hunks": [
+        {
+          "id": "src/auth/token.test.ts:a1b2c3d4e5f60000000000000000000000c0ffee:h1",
+          "oldStart": 0,
+          "oldLines": 0,
+          "newStart": 1,
+          "newLines": 18,
+          "patch": "@@ -0,0 +1,18 @@\n+import { TokenManager } from './token';\n+\n+test('coalesces concurrent refreshes into one call', async () => {\n+  let calls = 0;\n+  const mgr = new TokenManager();\n+  (mgr as any).refresh = async () => {\n+    calls++;\n+    return 'tok';\n+  };\n+  (mgr as any).expiresAt = 0;\n+  const [a, b] = await Promise.all([mgr.getToken(), mgr.getToken()]);\n+  expect(a).toBe('tok');\n+  expect(b).toBe('tok');\n+  expect(calls).toBe(1);\n+});"
+        }
+      ]
+    },
+    {
+      "path": "README.md",
+      "status": "modified",
+      "additions": 3,
+      "deletions": 0,
+      "hunks": [
+        {
+          "id": "README.md:a1b2c3d4e5f60000000000000000000000c0ffee:h1",
+          "oldStart": 40,
+          "oldLines": 2,
+          "newStart": 40,
+          "newLines": 5,
+          "patch": "@@ -40,2 +40,5 @@ ## Configuration\n | Variable | Purpose |\n |---|---|\n+| `ARGUS_TOKEN_SKEW_MS` | How early (ms) before expiry to refresh the access token. Default `60000`. |"
+        }
+      ]
+    }
+  ],
+  "review": {
+    "review": {
+      "version": 1,
+      "summary": "Switches the auth client from reactive (refresh-after-401) to proactive token refresh: it renews the access token when it is within a configurable skew window of expiry and coalesces concurrent refreshes behind a single in-flight promise. Adds a regression test for the concurrency case and documents the new skew env var.",
+      "intent": "The author wants to remove the latency spike and refresh stampede caused by only refreshing on 401. The diff delivers this: getToken() now checks nearExpiry() and routes through refreshOnce(), which shares one Promise. Gap to verify: nothing here changes the actual 401 retry path, so if a token is revoked server-side early the old failure mode may still exist — confirm that is intentional and still handled elsewhere.",
+      "critical": [
+        "refreshOnce() caches the in-flight promise but clears it in .finally(); confirm a rejected refresh does not get memoized and that the next getToken() retries rather than returning a rejected promise from a stale field.",
+        "nearExpiry() reads process.env on every call and coerces with Number(); a malformed ARGUS_TOKEN_SKEW_MS yields NaN, making the comparison always false and effectively disabling proactive refresh — needs validation or a fallback.",
+        "No test covers the near-expiry (non-zero skew) branch or a refresh() rejection; the added test only exercises the coalescing happy path."
+      ],
+      "flow": [
+        "Start at getToken() in src/auth/token.ts: the entry point callers already use.",
+        "Follow the new nearExpiry() check that decides whether a refresh is needed.",
+        "Step into refreshOnce() to see how the single in-flight promise is created and cleared.",
+        "Read the added token.test.ts to see the intended concurrency contract.",
+        "Check README.md for the operator-facing knob that tunes the skew window."
+      ],
+      "files": [
+        {
+          "path": "src/auth/token.ts",
+          "role": "core change",
+          "note": "Introduces proactive, coalesced token refresh via nearExpiry() and refreshOnce()."
+        },
+        {
+          "path": "src/auth/token.test.ts",
+          "role": "test",
+          "note": "New regression test asserting concurrent getToken() calls trigger exactly one refresh."
+        },
+        {
+          "path": "README.md",
+          "role": "docs",
+          "note": "Documents the ARGUS_TOKEN_SKEW_MS configuration variable."
+        }
+      ],
+      "hunks": [
+        {
+          "hunkId": "h1",
+          "why": "Replaces the inline expiry check with a coalesced refresh path so simultaneous callers share one refresh instead of each firing their own.",
+          "lookout": "The .finally() clears refreshInFlight on both success and failure — verify a rejected refresh isn't observed by a second awaiter as a shared rejection, and that clearing on reject can't race with a new caller assigning a fresh promise.",
+          "importance": "critical"
+        },
+        {
+          "hunkId": "h2",
+          "why": "Adds a configurable skew so refresh happens before, not at, expiry.",
+          "lookout": "Number(process.env...) returns NaN for garbage input, which silently disables proactive refresh; no lower/upper bound on skew either.",
+          "importance": "critical"
+        },
+        {
+          "hunkId": "h3",
+          "why": "Locks in the coalescing contract with a concurrency test.",
+          "lookout": "Only covers the happy path with expiresAt=0; does not test rejection cleanup or the real near-expiry window.",
+          "importance": "normal"
+        }
+      ]
+    },
+    "anchored": [
+      {
+        "hunkId": "src/auth/token.ts:a1b2c3d4e5f60000000000000000000000c0ffee:h1",
+        "why": "Replaces the inline expiry check with a coalesced refresh path so simultaneous callers share one refresh instead of each firing their own.",
+        "lookout": "The .finally() clears refreshInFlight on both success and failure — verify a rejected refresh isn't observed by a second awaiter as a shared rejection, and that clearing on reject can't race with a new caller assigning a fresh promise.",
+        "importance": "critical",
+        "path": "src/auth/token.ts",
+        "startLine": 12,
+        "endLine": 31,
+        "side": "new"
+      },
+      {
+        "hunkId": "src/auth/token.ts:a1b2c3d4e5f60000000000000000000000c0ffee:h2",
+        "why": "Adds a configurable skew so refresh happens before, not at, expiry.",
+        "lookout": "Number(process.env...) returns NaN for garbage input, which silently disables proactive refresh; no lower/upper bound on skew either.",
+        "importance": "critical",
+        "path": "src/auth/token.ts",
+        "startLine": 46,
+        "endLine": 53,
+        "side": "new"
+      },
+      {
+        "hunkId": "src/auth/token.test.ts:a1b2c3d4e5f60000000000000000000000c0ffee:h1",
+        "why": "Locks in the coalescing contract with a concurrency test.",
+        "lookout": "Only covers the happy path with expiresAt=0; does not test rejection cleanup or the real near-expiry window.",
+        "importance": "normal",
+        "path": "src/auth/token.test.ts",
+        "startLine": 1,
+        "endLine": 18,
+        "side": "new"
+      }
+    ],
+    "uncoveredHunkIds": [
+      "README.md:a1b2c3d4e5f60000000000000000000000c0ffee:h1"
+    ]
+  }
+}

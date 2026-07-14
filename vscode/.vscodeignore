@@ -1,0 +1,14 @@
+# Keep only what the extension needs at runtime: dist/ (bundled JS), media/
+# (webview assets), src/fixtures/ (demo fixture), package.json, README, LICENSE,
+# and the third-party notices. Everything else is build/test tooling.
+.vscode/**
+.gitkeep
+**/*.ts
+**/*.map
+**/tsconfig*.json
+vitest.config.*
+eslint.config.*
+test/**
+src/**
+!src/fixtures/**
+node_modules/**

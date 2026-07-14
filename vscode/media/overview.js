@@ -1,0 +1,193 @@
+// @ts-check
+/**
+ * ARGUS Overview webview client. Renders the OverviewModel posted by the
+ * extension host. No external resources; all DOM is built with createElement +
+ * textContent (never innerHTML with model data) so review text cannot inject
+ * markup. Communicates only via the acquired VS Code API.
+ */
+(function () {
+  'use strict';
+
+  const vscode = acquireVsCodeApi();
+  const app = /** @type {HTMLElement} */ (document.getElementById('app'));
+
+  /** @param {string} tag @param {string} [className] @param {string} [text] */
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text != null) node.textContent = text;
+    return node;
+  }
+
+  /** @param {string} title */
+  function sectionTitle(title) {
+    return el('h2', 'section-title', title);
+  }
+
+  /** @param {any} model */
+  function renderHeader(model) {
+    const header = el('header', 'pr-header');
+
+    const eyebrow = el('div', 'pr-eyebrow');
+    eyebrow.appendChild(el('span', 'pr-number', '#' + model.number));
+    if (model.repo) eyebrow.appendChild(el('span', 'pr-repo', model.repo));
+    header.appendChild(eyebrow);
+
+    header.appendChild(el('h1', 'pr-title', model.prTitle));
+
+    const meta = el('div', 'pr-meta');
+    if (model.author) meta.appendChild(el('span', 'pr-author', '@' + model.author));
+    if (model.url) {
+      const link = /** @type {HTMLAnchorElement} */ (el('a', 'pr-link', 'View on GitHub ↗'));
+      link.href = model.url;
+      meta.appendChild(link);
+    }
+    header.appendChild(meta);
+    return header;
+  }
+
+  /** @param {string} title @param {string} text @param {string} [cls] */
+  function paragraphSection(title, text, cls) {
+    const section = el('section', 'section' + (cls ? ' ' + cls : ''));
+    section.appendChild(sectionTitle(title));
+    const p = el('p', cls === 'intent' ? 'intent-text' : cls === '' ? 'summary-text' : undefined, text);
+    section.appendChild(p);
+    return section;
+  }
+
+  /** @param {string[]} items */
+  function renderCritical(items) {
+    const section = el('section', 'section critical');
+    section.appendChild(sectionTitle('Critical things to know'));
+    const ul = el('ul');
+    for (const item of items) ul.appendChild(el('li', undefined, item));
+    section.appendChild(ul);
+    return section;
+  }
+
+  /** @param {string[]} steps */
+  function renderFlow(steps) {
+    const section = el('section', 'section flow');
+    section.appendChild(sectionTitle('Understand the flow'));
+    const ol = el('ol');
+    for (const step of steps) ol.appendChild(el('li', undefined, step));
+    section.appendChild(ol);
+    return section;
+  }
+
+  /** @param {any[]} files */
+  function renderFiles(files) {
+    const section = el('section', 'section files');
+    section.appendChild(sectionTitle('Files'));
+    const list = el('div', 'files-list');
+
+    for (const file of files) {
+      const row = /** @type {HTMLButtonElement} */ (
+        el('button', 'file-row' + (file.reviewed ? ' file-reviewed' : ''))
+      );
+      row.type = 'button';
+      row.title = 'Open diff for ' + file.path;
+
+      row.appendChild(el('span', 'file-status ' + file.status, file.status));
+
+      const main = el('div', 'file-main');
+      const pathLine = el('div');
+      pathLine.appendChild(el('span', 'file-path', file.path));
+      if (file.role) pathLine.appendChild(el('span', 'file-role', file.role));
+      main.appendChild(pathLine);
+      if (file.note) main.appendChild(el('div', 'file-note', file.note));
+      row.appendChild(main);
+
+      const stats = el('span', 'file-stats');
+      if (file.additions) stats.appendChild(el('span', 'add', '+' + file.additions));
+      if (file.additions && file.deletions) stats.appendChild(document.createTextNode(' '));
+      if (file.deletions) stats.appendChild(el('span', 'del', '−' + file.deletions));
+      row.appendChild(stats);
+
+      row.addEventListener('click', function () {
+        vscode.postMessage({ type: 'openDiff', path: file.path });
+      });
+      list.appendChild(row);
+    }
+
+    section.appendChild(list);
+    return section;
+  }
+
+  /** @param {any} model */
+  function renderReady(model) {
+    const frag = document.createDocumentFragment();
+    frag.appendChild(renderHeader(model));
+    frag.appendChild(paragraphSection('Summary', model.summary, ''));
+    frag.appendChild(paragraphSection('Intent', model.intent, 'intent'));
+    if (model.critical && model.critical.length) frag.appendChild(renderCritical(model.critical));
+    if (model.flow && model.flow.length) frag.appendChild(renderFlow(model.flow));
+    if (model.files && model.files.length) frag.appendChild(renderFiles(model.files));
+    return frag;
+  }
+
+  /** @param {any} model */
+  function renderLoading(model) {
+    const frag = document.createDocumentFragment();
+    if (model.prTitle) frag.appendChild(renderHeader(model));
+    const state = el('div', 'state loading');
+    state.appendChild(el('div', 'spinner'));
+    state.appendChild(el('h2', undefined, 'Generating review…'));
+    state.appendChild(
+      el('p', undefined, 'ARGUS is reading the diff with a skeptic’s eye. This usually takes a few seconds.')
+    );
+    frag.appendChild(state);
+    return frag;
+  }
+
+  /** @param {any} model */
+  function renderError(model) {
+    const frag = document.createDocumentFragment();
+    if (model.prTitle) frag.appendChild(renderHeader(model));
+    const state = el('div', 'state error');
+    state.appendChild(el('h2', undefined, 'Review unavailable'));
+    state.appendChild(el('p', 'error-message', model.error || 'The AI review could not be generated.'));
+    const retry = /** @type {HTMLButtonElement} */ (el('button', 'btn', 'Retry'));
+    retry.type = 'button';
+    retry.addEventListener('click', function () {
+      vscode.postMessage({ type: 'regenerate' });
+    });
+    state.appendChild(retry);
+    frag.appendChild(state);
+    return frag;
+  }
+
+  function renderEmpty() {
+    const state = el('div', 'state empty');
+    state.appendChild(el('h2', undefined, 'No pull request loaded'));
+    state.appendChild(
+      el('p', undefined, 'Run “ARGUS: Review PR…” or “ARGUS: Open Demo Review” to get started.')
+    );
+    return state;
+  }
+
+  /** @param {any} model */
+  function render(model) {
+    while (app.firstChild) app.removeChild(app.firstChild);
+    switch (model.state) {
+      case 'ready':
+        app.appendChild(renderReady(model));
+        break;
+      case 'loading':
+        app.appendChild(renderLoading(model));
+        break;
+      case 'error':
+        app.appendChild(renderError(model));
+        break;
+      default:
+        app.appendChild(renderEmpty());
+    }
+  }
+
+  window.addEventListener('message', function (event) {
+    const message = event.data;
+    if (message && message.type === 'render') render(message.model);
+  });
+
+  vscode.postMessage({ type: 'ready' });
+})();

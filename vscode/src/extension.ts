@@ -1,0 +1,253 @@
+/**
+ * ARGUS extension entry point.
+ *
+ * Activation creates the single shared session accessor and wires all six visual
+ * surfaces (tree, diff content provider, AI + draft comment threads, overview
+ * panel, sidebar chat, GitHub submit). It owns the three commands that mutate
+ * session lifetime — `argus.reviewPr`, `argus.demo`, `argus.regenerate` — while
+ * every other command is registered by the surface that owns it.
+ *
+ * Error posture (contract 18/19): a missing/unauthenticated `gh` is fatal and
+ * surfaces as an actionable notification with install/login buttons; a missing
+ * or failing `claude` is non-fatal — the PR still loads (meta + files + diff),
+ * `review` stays `null` with `reviewError` set, and the overview shows an error
+ * state with Retry.
+ *
+ * @module
+ */
+
+import * as vscode from 'vscode';
+
+import { GhClient } from '@argus/engine';
+
+import { PrSession, ToolUnavailableError } from './prSession';
+import type { SessionAccessor } from './prSession';
+
+import { registerContentProvider } from './contentProvider';
+import { registerTree, TREE_REFRESH_COMMAND } from './tree';
+import { registerComments, refreshCommentsSession, getDraftComments, clearDrafts } from './comments';
+import { registerOverviewPanel } from './overviewPanel';
+import { registerSidebar, notifySidebarSessionChanged } from './sidebar';
+import { registerGitHub, promptPrInput, connectDrafts } from './github';
+
+const GH_INSTALL_URL = 'https://cli.github.com';
+
+/**
+ * The single loaded PR, shared by every surface. Held here (not in a surface)
+ * so the tree, diff, comments, overview, and sidebar all observe the same
+ * instance. Replaced wholesale on a new "Review PR"; mutated in place on
+ * regenerate/toggle.
+ */
+let currentSession: PrSession | null = null;
+
+/** Accessor handed to every surface so they read the live session lazily. */
+const getSession: SessionAccessor = () => currentSession;
+
+let output: vscode.OutputChannel;
+
+/**
+ * Activate the extension: create the output channel, wire every surface, and
+ * register the session-lifetime commands.
+ *
+ * @param context Extension context (subscriptions, storage URIs, extensionUri).
+ */
+export function activate(context: vscode.ExtensionContext): void {
+  output = vscode.window.createOutputChannel('ARGUS');
+  context.subscriptions.push(output);
+  output.appendLine('ARGUS activated.');
+
+  // --- Surfaces (each pushes its own disposables onto context.subscriptions).
+  registerContentProvider(context, getSession); // argus:// diff docs + argus.openDiff
+  registerTree(context, getSession); // argus.files tree + argus.toggleReviewed
+  registerComments(context, getSession); // AI hunk threads + user draft threads
+  registerOverviewPanel(context, getSession); // summary/intent/critical/flow webview
+  registerSidebar(context, getSession); // chat + file details webview
+  registerGitHub(context, getSession); // argus.submitReview
+
+  // Bridge the draft comments produced by comments.ts into the submit flow.
+  connectDrafts(
+    () =>
+      getDraftComments().map((d) => ({
+        path: d.path,
+        line: d.line,
+        // comments.ts speaks argus:// document sides (base/head); github.ts
+        // speaks engine diff sides (old/new).
+        side: d.side === 'base' ? 'old' : 'new',
+        body: d.body,
+      })),
+    clearDrafts,
+  );
+
+  // --- Session-lifetime commands (owned here).
+  const command = (id: string, handler: () => void | Promise<void>): void => {
+    context.subscriptions.push(
+      vscode.commands.registerCommand(id, () => {
+        void handler();
+      }),
+    );
+  };
+
+  command('argus.reviewPr', () => reviewPr(context));
+  command('argus.demo', () => demo());
+  command('argus.regenerate', () => regenerate());
+}
+
+/** Swap in a freshly loaded session, dispose the old one, refresh every surface. */
+function adoptSession(session: PrSession): void {
+  const previous = currentSession;
+  currentSession = session;
+  previous?.dispose();
+  refreshSurfaces();
+}
+
+/** Nudge each lazily-bound surface to re-read the session accessor. */
+function refreshSurfaces(): void {
+  void vscode.commands.executeCommand(TREE_REFRESH_COMMAND);
+  notifySidebarSessionChanged();
+  refreshCommentsSession();
+  // Reveal + rebind the overview so it reflects the new PR immediately.
+  void vscode.commands.executeCommand('argus.openOverview');
+}
+
+/**
+ * `ARGUS: Review PR…` — preflight `gh`, prompt for the PR reference, load the
+ * session with a progress notification, and adopt it. A `claude` problem is
+ * surfaced as a non-fatal warning; the diff still opens.
+ */
+async function reviewPr(context: vscode.ExtensionContext): Promise<void> {
+  const gh = new GhClient();
+  if (!(await ensureGhReady(gh))) return;
+
+  const parsed = await promptPrInput(gh);
+  if (!parsed) return;
+
+  await vscode.workspace.fs.createDirectory(context.globalStorageUri);
+
+  let session: PrSession;
+  try {
+    session = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `ARGUS: loading ${parsed.owner}/${parsed.repo}#${parsed.number}…`,
+      },
+      (progress) =>
+        PrSession.load({
+          owner: parsed.owner,
+          repo: parsed.repo,
+          number: parsed.number,
+          storageDir: context.globalStorageUri.fsPath,
+          gh,
+          onProgress: (message) => progress.report({ message }),
+        }),
+    );
+  } catch (error) {
+    await reportLoadError(error);
+    return;
+  }
+
+  adoptSession(session);
+  notifyReviewState(session);
+}
+
+/** `ARGUS: Open Demo Review (fixture)` — load the bundled fixture, no gh/claude. */
+async function demo(): Promise<void> {
+  try {
+    const session = await PrSession.loadDemo();
+    adoptSession(session);
+  } catch (error) {
+    void vscode.window.showErrorMessage(
+      `ARGUS: could not open the demo fixture. ${messageOf(error)}`,
+    );
+  }
+}
+
+/** `ARGUS: Regenerate Review` — re-run the AI review, bypassing the cache. */
+async function regenerate(): Promise<void> {
+  const session = currentSession;
+  if (!session) {
+    void vscode.window.showInformationMessage(
+      'ARGUS: load a PR first (run “ARGUS: Review PR…”).',
+    );
+    return;
+  }
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: 'ARGUS: regenerating review…',
+    },
+    () => session.regenerate(),
+  );
+  notifyReviewState(session);
+}
+
+/**
+ * Verify `gh` is installed and authenticated; otherwise show an actionable
+ * notification (Install / docs / authenticate hint) and return `false`.
+ */
+async function ensureGhReady(gh: GhClient): Promise<boolean> {
+  if (!(await gh.isAvailable())) {
+    const choice = await vscode.window.showErrorMessage(
+      'ARGUS: the GitHub CLI (`gh`) was not found. Install it and ensure `gh` is on your PATH.',
+      'Install gh',
+    );
+    if (choice === 'Install gh') {
+      void vscode.env.openExternal(vscode.Uri.parse(GH_INSTALL_URL));
+    }
+    return false;
+  }
+  if (!(await gh.isAuthed())) {
+    void vscode.window.showErrorMessage(
+      'ARGUS: the GitHub CLI is not authenticated. Run `gh auth login` in a terminal, then retry.',
+    );
+    return false;
+  }
+  return true;
+}
+
+/** Turn a load failure into an actionable notification. */
+async function reportLoadError(error: unknown): Promise<void> {
+  if (error instanceof ToolUnavailableError && error.tool === 'gh') {
+    if (error.reason === 'missing') {
+      const choice = await vscode.window.showErrorMessage(
+        `ARGUS: ${error.message}`,
+        'Install gh',
+      );
+      if (choice === 'Install gh') {
+        void vscode.env.openExternal(vscode.Uri.parse(GH_INSTALL_URL));
+      }
+      return;
+    }
+    void vscode.window.showErrorMessage(`ARGUS: ${error.message}`);
+    return;
+  }
+  void vscode.window.showErrorMessage(
+    `ARGUS: could not load the pull request. ${messageOf(error)}`,
+  );
+}
+
+/**
+ * After a load/regenerate, surface the AI-review state: a `reviewError` becomes
+ * a non-fatal warning with a Regenerate action (the diff still works).
+ */
+function notifyReviewState(session: PrSession): void {
+  if (session.review === null && session.reviewError) {
+    output.appendLine(`Review unavailable: ${session.reviewError}`);
+    void vscode.window
+      .showWarningMessage(`ARGUS: ${session.reviewError}`, 'Regenerate')
+      .then((choice) => {
+        if (choice === 'Regenerate') {
+          void vscode.commands.executeCommand('argus.regenerate');
+        }
+      });
+  }
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Deactivate: dispose the current session, if any. */
+export function deactivate(): void {
+  currentSession?.dispose();
+  currentSession = null;
+}

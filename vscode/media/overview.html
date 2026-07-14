@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src %%CSP_SOURCE%%; script-src 'nonce-%%NONCE%%'; font-src %%CSP_SOURCE%%;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="%%STYLE_URI%%" />
+    <title>ARGUS Overview</title>
+  </head>
+  <body>
+    <main id="app" class="app" aria-live="polite">
+      <!-- Rendered by overview.js from the posted OverviewModel. -->
+    </main>
+    <script nonce="%%NONCE%%" src="%%SCRIPT_URI%%"></script>
+  </body>
+</html>
