@@ -56,6 +56,16 @@ const getSession: SessionAccessor = () => currentSession;
 let output: vscode.OutputChannel;
 
 /**
+ * "$(sync~spin) ARGUS reviewing…" status-bar item, visible only while the
+ * current session's {@link PrSession.reviewStatus} is `'running'`. Distinct from
+ * the "Submit Review to GitHub (N)" item owned by github.ts (two items is fine).
+ */
+let reviewingStatusBar: vscode.StatusBarItem | undefined;
+
+/** Subscription to the current session's review changes; re-bound on adopt. */
+let reviewSub: vscode.Disposable | undefined;
+
+/**
  * Activate the extension: create the output channel, wire every surface, and
  * register the session-lifetime commands.
  *
@@ -65,6 +75,16 @@ export function activate(context: vscode.ExtensionContext): void {
   output = vscode.window.createOutputChannel('ARGUS');
   context.subscriptions.push(output);
   output.appendLine('ARGUS activated.');
+
+  reviewingStatusBar = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Right,
+    101, // just left of the submit item (priority 100)
+  );
+  reviewingStatusBar.text = '$(sync~spin) ARGUS reviewing…';
+  reviewingStatusBar.tooltip = 'ARGUS is generating the AI review in the background.';
+  context.subscriptions.push(reviewingStatusBar, {
+    dispose: () => reviewSub?.dispose(),
+  });
 
   // --- Surfaces (each pushes its own disposables onto context.subscriptions).
   registerContentProvider(context, getSession); // argus:// diff docs + argus.openDiff
@@ -110,9 +130,34 @@ export function activate(context: vscode.ExtensionContext): void {
 function adoptSession(context: vscode.ExtensionContext, session: PrSession): void {
   const previous = currentSession;
   currentSession = session;
+  // Re-bind the "reviewing…" indicator + the errored-review toast to the new
+  // session's review lifecycle. The review may still be running in the
+  // background (progressive load) — surfaces fill in when onDidChangeReview fires.
+  reviewSub?.dispose();
+  reviewSub = session.onDidChangeReview(() => onReviewChanged(session));
   previous?.dispose();
   refreshSurfaces();
+  refreshReviewingStatus();
   maybeSuggestChatRelocation(context);
+}
+
+/**
+ * React to a review-lifecycle change on the current session: keep the
+ * "reviewing…" status-bar item in sync, and — when a review settles into the
+ * error state — surface the actionable warning (contract 18/19). Ignores stale
+ * events from a session that has since been replaced.
+ */
+function onReviewChanged(session: PrSession): void {
+  if (session !== currentSession) return;
+  refreshReviewingStatus();
+  if (session.reviewStatus === 'error') notifyReviewState(session);
+}
+
+/** Show the spinner while the current review is running; hide it otherwise. */
+function refreshReviewingStatus(): void {
+  if (!reviewingStatusBar) return;
+  if (currentSession?.reviewStatus === 'running') reviewingStatusBar.show();
+  else reviewingStatusBar.hide();
 }
 
 /** Nudge each lazily-bound surface to re-read the session accessor. */
@@ -150,9 +195,12 @@ function maybeSuggestChatRelocation(context: vscode.ExtensionContext): void {
 }
 
 /**
- * `ARGUS: Review PR…` — preflight `gh`, prompt for the PR reference, load the
- * session with a progress notification, and adopt it. A `claude` problem is
- * surfaced as a non-fatal warning; the diff still opens.
+ * `ARGUS: Review PR…` — preflight `gh`, prompt for the PR reference, fetch the
+ * PR (meta + diff, with a progress notification), and adopt the session as soon
+ * as the files are ready. The AI review then streams in the background: the
+ * "$(sync~spin) ARGUS reviewing…" status-bar item shows while it runs, and a
+ * `claude` problem surfaces as a non-fatal warning once it settles (the diff
+ * still opens).
  */
 async function reviewPr(context: vscode.ExtensionContext): Promise<void> {
   const gh = new GhClient();
@@ -168,7 +216,7 @@ async function reviewPr(context: vscode.ExtensionContext): Promise<void> {
     session = await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
-        title: `ARGUS: loading ${parsed.owner}/${parsed.repo}#${parsed.number}…`,
+        title: `ARGUS: fetching ${parsed.owner}/${parsed.repo}#${parsed.number}…`,
       },
       (progress) =>
         PrSession.load({
@@ -186,7 +234,8 @@ async function reviewPr(context: vscode.ExtensionContext): Promise<void> {
   }
 
   adoptSession(context, session);
-  notifyReviewState(session);
+  // The AI review runs in the background; its status/errors are surfaced via the
+  // "reviewing…" status-bar item and the onDidChangeReview handler (adoptSession).
 }
 
 /** `ARGUS: Open Demo Review (fixture)` — load the bundled fixture, no gh/claude. */
@@ -201,8 +250,13 @@ async function demo(context: vscode.ExtensionContext): Promise<void> {
   }
 }
 
-/** `ARGUS: Regenerate Review` — re-run the AI review, bypassing the cache. */
-async function regenerate(): Promise<void> {
+/**
+ * `ARGUS: Regenerate Review` — re-run the AI review, bypassing the cache. Reuses
+ * the same background path as the initial load: `reviewStatus` flips to
+ * `'running'` (so the "reviewing…" indicator + overview loading state show) and
+ * the surfaces refill when it settles via onDidChangeReview. Not awaited here.
+ */
+function regenerate(): void {
   const session = currentSession;
   if (!session) {
     void vscode.window.showInformationMessage(
@@ -210,14 +264,7 @@ async function regenerate(): Promise<void> {
     );
     return;
   }
-  await vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: 'ARGUS: regenerating review…',
-    },
-    () => session.regenerate(),
-  );
-  notifyReviewState(session);
+  void session.regenerate();
 }
 
 /**

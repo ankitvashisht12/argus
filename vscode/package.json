@@ -2,7 +2,7 @@
   "name": "argus-review",
   "displayName": "ARGUS — AI PR Review",
   "description": "AI-first GitHub PR review inside VS Code: skeptic-lens summaries, per-hunk notes, and review submission.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "ankitvashisht",
   "private": false,
   "license": "MIT",

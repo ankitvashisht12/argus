@@ -151,6 +151,20 @@ export interface ReviewOverview {
 export type BlobSide = 'base' | 'head';
 
 /**
+ * Lifecycle of the AI review, independent of {@link PrSession.review} /
+ * {@link PrSession.reviewError} (which remain the source of truth for contract
+ * 19). Progressive loading means a live session is returned with the diff usable
+ * while the review is still `'running'`.
+ *
+ *   - `'idle'`    — no review has started (transient; a live load flips to
+ *                   `'running'` immediately, demo sessions start `'ready'`).
+ *   - `'running'` — the AI review is generating in the background.
+ *   - `'ready'`   — {@link PrSession.review} is populated.
+ *   - `'error'`   — {@link PrSession.reviewError} is set, `review` is `null`.
+ */
+export type ReviewStatus = 'idle' | 'running' | 'ready' | 'error';
+
+/**
  * Accessor a surface uses to reach the current session lazily. Returns `null`
  * when no PR is loaded. Surfaces register once at activation and read through
  * this so they survive review/regenerate without re-registration.
@@ -217,6 +231,9 @@ export class PrSession {
 
   #review: NormalizedReview | null;
   #reviewError: string | null;
+  #reviewStatus: ReviewStatus;
+  /** In-flight background review, so callers/tests can await it settling. */
+  #reviewInFlight: Promise<void> | null = null;
 
   readonly #onDidChangeReview = new vscode.EventEmitter<void>();
   readonly #onDidChangeReviewedState = new vscode.EventEmitter<string>();
@@ -234,6 +251,10 @@ export class PrSession {
     this.#model = deps.model;
     this.#review = deps.review;
     this.#reviewError = deps.reviewError;
+    // Derive the initial lifecycle from the constructed review: a demo session
+    // arrives with its fixture review already present (`ready`); a live session
+    // arrives blank (`idle`) and `load` flips it to `running` right away.
+    this.#reviewStatus = deps.review ? 'ready' : deps.reviewError ? 'error' : 'idle';
     this.#reviewed = deps.reviewed;
     this.#chatHistory = deps.chatHistory;
     this.#gh = deps.gh;
@@ -247,14 +268,24 @@ export class PrSession {
   /* ---------------------------------------------------------------------- */
 
   /**
-   * Load a live PR: fetch meta + diff via `gh`, parse the diff, build the
-   * digest, restore durable UI state, and run (or cache-hit) the AI review.
+   * Load a live PR in TWO stages (progressive loading):
+   *
+   *   1. Foreground (awaited): fetch meta + diff via `gh`, parse the diff, build
+   *      the digest, and restore durable UI state. The returned session's tree,
+   *      diffs and file details are usable immediately.
+   *   2. Background (NOT awaited): the AI review starts automatically via
+   *      {@link startReview} (respecting the content-hash cache — a hit still
+   *      populates near-instantly). {@link reviewStatus} is `'running'` by the
+   *      time this resolves, and {@link onDidChangeReview} fires when it lands.
+   *
+   * The `onProgress` callback only covers stage 1 (the fetch); the background
+   * review reports through {@link reviewStatus} / {@link onDidChangeReview}.
    *
    * `gh` availability is a hard precondition: if the `gh` binary is missing or
    * unauthenticated this rejects with a typed {@link ToolUnavailableError} and
-   * no session is produced. A `claude` problem is not fatal — the returned
-   * session has `review === null` and `reviewError` set, so the diff still
-   * opens without AI.
+   * no session is produced. A `claude` problem is not fatal — the session ends
+   * up with `review === null` and `reviewError` set, so the diff still opens
+   * without AI.
    *
    * @throws {ToolUnavailableError} when `gh` is missing or unauthenticated.
    */
@@ -300,7 +331,10 @@ export class PrSession {
       kv,
     });
 
-    await session.#runReview({ bypassCache: false, progress });
+    // Stage 2 — kick off the AI review in the background. Deliberately NOT
+    // awaited: the caller adopts the session now (files/tree/diffs live) and the
+    // review streams in, flipping `reviewStatus` and firing `onDidChangeReview`.
+    session.#reviewInFlight = session.startReview({ bypassCache: false });
     return session;
   }
 
@@ -363,6 +397,24 @@ export class PrSession {
     return this.#reviewError;
   }
 
+  /**
+   * Lifecycle of the AI review — see {@link ReviewStatus}. Surfaces read this to
+   * show a "reviewing…" affordance while `'running'` without conflating it with
+   * the error state (contract 19: `'error'` implies `review === null`).
+   */
+  get reviewStatus(): ReviewStatus {
+    return this.#reviewStatus;
+  }
+
+  /**
+   * Resolve when the in-flight background review (if any) has settled. Resolves
+   * immediately when no review is running. Never rejects — a failed review is
+   * captured in {@link reviewError} / {@link reviewStatus}, not thrown here.
+   */
+  reviewSettled(): Promise<void> {
+    return this.#reviewInFlight ?? Promise.resolve();
+  }
+
   /** Overview slice for the overview webview, or `null` with no review. */
   get overview(): ReviewOverview | null {
     if (!this.#review) return null;
@@ -421,7 +473,26 @@ export class PrSession {
       this.#onDidChangeReview.fire();
       return;
     }
-    await this.#runReview({ bypassCache: true });
+    this.#reviewInFlight = this.startReview({ bypassCache: true });
+    await this.#reviewInFlight;
+  }
+
+  /**
+   * Flip {@link reviewStatus} to `'running'` (firing {@link onDidChangeReview}
+   * so the UI can show a "reviewing…" state), then run the review pipeline to
+   * completion. Shared by the initial background load and {@link regenerate}.
+   *
+   * Resolves once the review has settled into `'ready'` or `'error'`; it does
+   * not reject — failures land in {@link reviewError} (contract 19).
+   */
+  async startReview(opts: {
+    bypassCache: boolean;
+    progress?: (message: string) => void;
+  }): Promise<void> {
+    this.#reviewStatus = 'running';
+    this.#reviewError = null;
+    this.#onDidChangeReview.fire();
+    await this.#runReview(opts);
   }
 
   /**
@@ -582,12 +653,14 @@ export class PrSession {
   #setReview(review: NormalizedReview): void {
     this.#review = review;
     this.#reviewError = null;
+    this.#reviewStatus = 'ready';
     this.#onDidChangeReview.fire();
   }
 
   #setReviewError(message: string): void {
     this.#review = null;
     this.#reviewError = message;
+    this.#reviewStatus = 'error';
     this.#onDidChangeReview.fire();
   }
 
