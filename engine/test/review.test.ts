@@ -4,9 +4,12 @@ import {
   buildDigest,
   buildReviewPrompt,
   buildReviewSchema,
+  bucketFiles,
+  heuristicBucket,
   firstChangedLine,
   normalizeReview,
   reviewSchema,
+  READING_BUCKETS,
   DEFAULT_DIGEST_BUDGET,
   LARGE_DIGEST_BUDGET,
 } from '../src/review/pipeline.js';
@@ -247,6 +250,15 @@ describe('buildReviewPrompt', () => {
     expect(prompt).toContain('A missing alias is a contract violation.');
   });
 
+  it('instructs per-file reading guidance (bucket + dependency-first order)', () => {
+    const digest = buildDigest(threeFileFixture);
+    const prompt = buildReviewPrompt(meta, digest);
+    expect(prompt).toContain('"bucket"');
+    expect(prompt).toContain('"readingOrder"');
+    expect(prompt).toContain('comprehensible from');
+    expect(prompt).toContain('LAST');
+  });
+
   it('surfaces truncation in the prompt when the digest was clamped', () => {
     const digest = buildDigest(threeFileFixture, { perHunk: 10, total: 1_000 });
     const prompt = buildReviewPrompt(meta, digest);
@@ -290,6 +302,14 @@ describe('reviewSchema', () => {
 
   it('static reviewSchema imposes no per-hunk lower bound', () => {
     expect((reviewSchema as any).properties.hunks.minItems).toBeUndefined();
+  });
+
+  it('requires per-file reading guidance (bucket + readingOrder)', () => {
+    const fileItem = (reviewSchema as any).properties.files.items;
+    expect(fileItem.required).toEqual(['path', 'role', 'note', 'bucket', 'readingOrder']);
+    expect(fileItem.properties.bucket.type).toBe('string');
+    expect(fileItem.properties.readingOrder.type).toBe('integer');
+    expect(fileItem.additionalProperties).toBe(false);
   });
 });
 
@@ -526,5 +546,201 @@ describe('normalizeReview', () => {
     for (const a of out.anchored) {
       expect(a.startLine).toBe(a.endLine);
     }
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* heuristicBucket (pure fallback classification table)                        */
+/* -------------------------------------------------------------------------- */
+
+describe('heuristicBucket', () => {
+  const table: Array<[string, (typeof READING_BUCKETS)[number]]> = [
+    // Source (default)
+    ['src/index.ts', 'Source'],
+    ['engine/src/review/pipeline.ts', 'Source'],
+    ['app/components/Button.tsx', 'Source'],
+    ['lib/util.js', 'Source'],
+    ['main.go', 'Source'],
+    // Tests — by suffix and by directory
+    ['src/app.test.ts', 'Tests'],
+    ['src/app.spec.tsx', 'Tests'],
+    ['test/helper.ts', 'Tests'],
+    ['engine/test/review.test.ts', 'Tests'],
+    ['src/components/__tests__/Button.tsx', 'Tests'],
+    ['pkg/thing_test.go', 'Tests'],
+    // Docs
+    ['README.md', 'Docs'],
+    ['docs/guide.mdx', 'Docs'],
+    ['docs/api/overview.md', 'Docs'],
+    ['LICENSE', 'Docs'],
+    ['CHANGELOG.txt', 'Docs'],
+    // Config & CI
+    ['.github/workflows/ci.yml', 'Config & CI'],
+    ['.gitignore', 'Config & CI'],
+    ['.eslintrc.json', 'Config & CI'],
+    ['tsconfig.json', 'Config & CI'],
+    ['tsconfig.base.json', 'Config & CI'],
+    ['vitest.config.ts', 'Config & CI'],
+    ['eslint.config.mjs', 'Config & CI'],
+    ['package.json', 'Config & CI'],
+    ['Dockerfile', 'Config & CI'],
+    ['Makefile', 'Config & CI'],
+    ['config/settings.yaml', 'Config & CI'],
+    ['.prettierrc', 'Config & CI'],
+    // Generated / lockfiles — win over their config-shaped extensions
+    ['package-lock.json', 'Generated'],
+    ['yarn.lock', 'Generated'],
+    ['pnpm-lock.yaml', 'Generated'],
+    ['go.sum', 'Generated'],
+    ['dist/index.js', 'Generated'],
+    ['build/out.css', 'Generated'],
+    ['coverage/lcov.info', 'Generated'],
+    ['node_modules/dep/index.js', 'Generated'],
+    ['src/schema.generated.ts', 'Generated'],
+    ['assets/app.min.js', 'Generated'],
+    ['src/__snapshots__/x.ts.snap', 'Generated'],
+  ];
+
+  it.each(table)('classifies %s as %s', (path, expected) => {
+    expect(heuristicBucket(path)).toBe(expected);
+  });
+
+  it('only ever emits canonical bucket labels', () => {
+    for (const [path] of table) {
+      expect(READING_BUCKETS).toContain(heuristicBucket(path));
+    }
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* bucketFiles (heuristic fallback ordering + review-driven ordering)          */
+/* -------------------------------------------------------------------------- */
+
+function fc(path: string): FileChange {
+  return { path, status: 'modified', additions: 1, deletions: 0, hunks: [] };
+}
+
+function reviewWith(files: ReviewResult['files']): ReviewResult {
+  return {
+    version: 1,
+    summary: 's',
+    intent: 'i',
+    critical: [],
+    flow: [],
+    files,
+    hunks: [],
+  };
+}
+
+describe('bucketFiles — heuristic fallback (no review)', () => {
+  it('orders buckets source > tests > docs > config/CI > generated, alpha within', () => {
+    const files = [
+      fc('yarn.lock'),
+      fc('README.md'),
+      fc('src/b.ts'),
+      fc('src/a.ts'),
+      fc('package.json'),
+      fc('src/a.test.ts'),
+      fc('docs/guide.md'),
+    ];
+    const buckets = bucketFiles(files);
+    expect(buckets.map((b) => b.label)).toEqual([
+      'Source',
+      'Tests',
+      'Docs',
+      'Config & CI',
+      'Generated',
+    ]);
+    // Alphabetical within the Source bucket.
+    expect(buckets[0].files.map((f) => f.path)).toEqual(['src/a.ts', 'src/b.ts']);
+    // Docs holds both README and the docs/ file, alphabetical (localeCompare:
+    // "docs/…" sorts before "README.md").
+    expect(buckets[2].files.map((f) => f.path)).toEqual(['docs/guide.md', 'README.md']);
+  });
+
+  it('drops empty buckets (only non-empty groups are returned)', () => {
+    const buckets = bucketFiles([fc('src/a.ts'), fc('src/b.ts')]);
+    expect(buckets.map((b) => b.label)).toEqual(['Source']);
+  });
+
+  it('treats an empty file list as no buckets', () => {
+    expect(bucketFiles([])).toEqual([]);
+  });
+
+  it('uses heuristic order when a review carries no reading guidance', () => {
+    const files = [fc('config.yml'), fc('src/a.ts')];
+    const review = reviewWith([
+      { path: 'src/a.ts', role: 'r', note: 'n' }, // no bucket / readingOrder
+      { path: 'config.yml', role: 'r', note: 'n' },
+    ]);
+    const buckets = bucketFiles(files, review);
+    expect(buckets.map((b) => b.label)).toEqual(['Source', 'Config & CI']);
+  });
+});
+
+describe('bucketFiles — review-driven ordering', () => {
+  it("groups by the model's bucket labels and orders by readingOrder", () => {
+    const files = [
+      fc('src/api.ts'),
+      fc('src/core.ts'),
+      fc('src/api.test.ts'),
+    ];
+    const review = reviewWith([
+      { path: 'src/core.ts', role: 'r', note: 'n', bucket: 'Core logic', readingOrder: 0 },
+      { path: 'src/api.ts', role: 'r', note: 'n', bucket: 'API surface', readingOrder: 1 },
+      { path: 'src/api.test.ts', role: 'r', note: 'n', bucket: 'Tests', readingOrder: 2 },
+    ]);
+    const buckets = bucketFiles(files, review);
+    // Buckets ordered by their earliest readingOrder.
+    expect(buckets.map((b) => b.label)).toEqual(['Core logic', 'API surface', 'Tests']);
+    expect(buckets[0].files.map((f) => f.path)).toEqual(['src/core.ts']);
+  });
+
+  it('orders files within a bucket by readingOrder, then path', () => {
+    const files = [fc('src/z.ts'), fc('src/a.ts'), fc('src/m.ts')];
+    const review = reviewWith([
+      { path: 'src/z.ts', role: 'r', note: 'n', bucket: 'Core', readingOrder: 0 },
+      { path: 'src/a.ts', role: 'r', note: 'n', bucket: 'Core', readingOrder: 5 },
+      // src/m.ts left unranked → falls back, sorts after ranked, alpha.
+      { path: 'src/m.ts', role: 'r', note: 'n', bucket: 'Core' },
+    ]);
+    const buckets = bucketFiles(files, review);
+    expect(buckets).toHaveLength(1);
+    expect(buckets[0].files.map((f) => f.path)).toEqual(['src/z.ts', 'src/a.ts', 'src/m.ts']);
+  });
+
+  it('is defensive with bogus paths and missing files (schema round-trip)', () => {
+    // The review references a path that is NOT among the actual changed files
+    // (bogus / stale), gives one real file guidance, and forgets another file.
+    const files = [fc('src/core.ts'), fc('src/forgotten.ts'), fc('package-lock.json')];
+    const review = reviewWith([
+      { path: 'src/core.ts', role: 'r', note: 'n', bucket: 'Core', readingOrder: 0 },
+      { path: 'does/not/exist.ts', role: 'r', note: 'n', bucket: 'Ghost', readingOrder: 1 },
+      // src/forgotten.ts and package-lock.json get no entry → heuristic fallback.
+    ]);
+    const buckets = bucketFiles(files, review);
+    const labels = buckets.map((b) => b.label);
+    // The bogus path never creates a phantom row/bucket.
+    expect(labels).not.toContain('Ghost');
+    const all = buckets.flatMap((b) => b.files.map((f) => f.path));
+    expect(all.sort()).toEqual(['package-lock.json', 'src/core.ts', 'src/forgotten.ts']);
+    // The ranked "Core" bucket comes first; fallback buckets follow.
+    expect(labels[0]).toBe('Core');
+    // Forgotten source lands in its heuristic bucket, lockfile in Generated.
+    const forgottenBucket = buckets.find((b) => b.files.some((f) => f.path === 'src/forgotten.ts'));
+    expect(forgottenBucket?.label).toBe('Source');
+    const lockBucket = buckets.find((b) =>
+      b.files.some((f) => f.path === 'package-lock.json'),
+    );
+    expect(lockBucket?.label).toBe('Generated');
+  });
+
+  it('falls back to a heuristic bucket when the model gives a blank label', () => {
+    const files = [fc('src/a.ts')];
+    const review = reviewWith([
+      { path: 'src/a.ts', role: 'r', note: 'n', bucket: '   ', readingOrder: 0 },
+    ]);
+    const buckets = bucketFiles(files, review);
+    expect(buckets.map((b) => b.label)).toEqual(['Source']);
   });
 });

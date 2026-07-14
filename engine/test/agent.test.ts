@@ -11,9 +11,15 @@ import {
   ClaudeAgent,
   DEFAULT_FALLBACK_MODEL,
   DEFAULT_MODEL,
+  REVIEW_TIMEOUT_BASE_MS,
+  REVIEW_TIMEOUT_CAP_MS,
+  REVIEW_TIMEOUT_PER_HUNK_MS,
+  REVIEW_TIMEOUT_PER_KB_MS,
   buildStreamArgs,
   buildStructuredArgs,
+  computeReviewTimeoutMs,
   isModelAvailabilityError,
+  resolveReviewTimeoutMs,
   type ChatDelta,
   type ChildProcessLike,
   type SpawnLike,
@@ -426,6 +432,72 @@ describe('isAvailable', () => {
     });
     expect(await agent.isAvailable()).toBe(false);
   });
+});
+
+describe('computeReviewTimeoutMs — scales with digest size', () => {
+  it('is the base budget for an (impossibly) empty digest', () => {
+    expect(computeReviewTimeoutMs({ hunkCount: 0, digestChars: 0 })).toBe(
+      REVIEW_TIMEOUT_BASE_MS,
+    );
+  });
+
+  it('adds a per-hunk and per-KB increment', () => {
+    // 4 hunks, ~4 KB (4096 chars → 4 KB exactly).
+    expect(computeReviewTimeoutMs({ hunkCount: 4, digestChars: 4096 })).toBe(
+      REVIEW_TIMEOUT_BASE_MS +
+        4 * REVIEW_TIMEOUT_PER_HUNK_MS +
+        4 * REVIEW_TIMEOUT_PER_KB_MS,
+    );
+  });
+
+  it('rounds partial kilobytes up (a single char still costs one KB)', () => {
+    expect(computeReviewTimeoutMs({ hunkCount: 0, digestChars: 1 })).toBe(
+      REVIEW_TIMEOUT_BASE_MS + REVIEW_TIMEOUT_PER_KB_MS,
+    );
+  });
+
+  it('comfortably exceeds the observed ~75s cost of a small 2-file PR', () => {
+    // A 2-file toy PR (say 3 hunks, ~3 KB) took ~75s in the field; the scaled
+    // budget must give real headroom over that.
+    const ms = computeReviewTimeoutMs({ hunkCount: 3, digestChars: 3072 });
+    expect(ms).toBeGreaterThan(75_000);
+  });
+
+  it('clamps a very large PR to the cap', () => {
+    const ms = computeReviewTimeoutMs({ hunkCount: 500, digestChars: 500_000 });
+    expect(ms).toBe(REVIEW_TIMEOUT_CAP_MS);
+  });
+
+  it('floors negative / NaN inputs to zero (never below the base budget)', () => {
+    expect(computeReviewTimeoutMs({ hunkCount: -5, digestChars: -100 })).toBe(
+      REVIEW_TIMEOUT_BASE_MS,
+    );
+    expect(computeReviewTimeoutMs({ hunkCount: NaN, digestChars: NaN })).toBe(
+      REVIEW_TIMEOUT_BASE_MS,
+    );
+  });
+});
+
+describe('resolveReviewTimeoutMs — setting override', () => {
+  const digest = { hunkCount: 4, digestChars: 4096 };
+
+  it('honors a positive override (seconds → ms) verbatim', () => {
+    expect(resolveReviewTimeoutMs(300, digest)).toBe(300_000);
+  });
+
+  it('honors an override above the auto cap (explicit user choice wins)', () => {
+    expect(resolveReviewTimeoutMs(900, digest)).toBe(900_000);
+    expect(900_000).toBeGreaterThan(REVIEW_TIMEOUT_CAP_MS);
+  });
+
+  it.each([undefined, null, 0, -30, NaN])(
+    'falls back to the computed timeout for %j',
+    (value) => {
+      expect(resolveReviewTimeoutMs(value as number | null | undefined, digest)).toBe(
+        computeReviewTimeoutMs(digest),
+      );
+    },
+  );
 });
 
 describe('isModelAvailabilityError', () => {

@@ -81,6 +81,18 @@ export class Range {
   ) {}
 }
 
+/**
+ * Minimal `workspace` surface. `getConfiguration(...).get(key)` returns
+ * `undefined` (i.e. "setting unset → use defaults"), which is all the pure
+ * logic under test needs. Tests that must exercise a specific setting value
+ * inject their own accessor rather than mutating global stub state.
+ */
+export const workspace = {
+  getConfiguration: (_section?: string) => ({
+    get: <T>(_key: string, _default?: T): T | undefined => undefined,
+  }),
+};
+
 export const CommentMode = { Editing: 0, Preview: 1 } as const;
 export const CommentThreadCollapsibleState = { Collapsed: 0, Expanded: 1 } as const;
 export const TreeItemCollapsibleState = { None: 0, Collapsed: 1, Expanded: 2 } as const;

@@ -139,6 +139,39 @@ export function errorBanner(side: BlobSide, path: string, message: string): stri
   );
 }
 
+/**
+ * Render the calm, actionable placeholder shown when an `argus://` document is
+ * requested but no matching PR session is loaded — the common case when VS Code
+ * restores a diff tab on window reload before any PR has been re-reviewed, or
+ * when a different PR is currently loaded. Everything needed is derived from the
+ * URI itself (which carries owner/repo/number), so this is NOT a scary load
+ * error: it tells the user exactly which PR the tab belongs to and how to bring
+ * it back.
+ */
+export function placeholderBanner(parts: ArgusUriParts): string {
+  return (
+    `This diff belongs to PR #${parts.number} of ${parts.owner}/${parts.repo}.\n\n` +
+    `ARGUS isn't tracking that pull request in this window right now — the\n` +
+    `window was reloaded, or a different PR is loaded — so the ${parts.side}-side\n` +
+    `content for:\n` +
+    `  ${parts.path}\n` +
+    `isn't available yet.\n\n` +
+    `Run “ARGUS: Review PR…” and open #${parts.number} again to reload this diff.\n`
+  );
+}
+
+/** Whether a loaded session is the same PR the given URI belongs to. */
+function sessionMatchesUri(
+  session: { meta: { owner: string; repo: string; number: number } },
+  parts: ArgusUriParts,
+): boolean {
+  return (
+    session.meta.owner === parts.owner &&
+    session.meta.repo === parts.repo &&
+    session.meta.number === parts.number
+  );
+}
+
 /* -------------------------------------------------------------------------- */
 /* Registration                                                               */
 /* -------------------------------------------------------------------------- */
@@ -186,8 +219,13 @@ export function registerContentProvider(
 
       const session = getSession();
       let text: string;
-      if (!session) {
-        text = errorBanner(parts.side, parts.path, 'No pull request is loaded.');
+      if (!session || !sessionMatchesUri(session, parts)) {
+        // No session (e.g. a diff tab restored after a window reload) or a
+        // different PR is loaded — never the scary load-error text: show a calm
+        // placeholder derived from the URI's own owner/repo/number. When a
+        // matching PR is later loaded, `syncSession` invalidates this cached
+        // placeholder and VS Code re-requests the real content.
+        text = placeholderBanner(parts);
       } else {
         try {
           text = await session.fileContents(parts.path, parts.side);

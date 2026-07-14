@@ -22,6 +22,252 @@ import type {
   ReviewResult,
 } from '../types.js';
 
+/* -------------------------------------------------------------------------- */
+/* Reading-order buckets (heuristic fallback + review normalization)          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Canonical reading buckets in reading order — most foundational first. This is
+ * the order the heuristic fallback groups files into when no AI review has
+ * landed yet: read the code first (source, then the tests that exercise it),
+ * then the prose (docs), then the machinery (config/CI), with generated output
+ * and lockfiles last because they are derived, not authored.
+ */
+export const READING_BUCKETS = [
+  'Source',
+  'Tests',
+  'Docs',
+  'Config & CI',
+  'Generated',
+] as const;
+
+/** One of the canonical {@link READING_BUCKETS} labels. */
+export type HeuristicBucket = (typeof READING_BUCKETS)[number];
+
+/** A bucket label plus the files in it, ordered for reading. */
+export interface FileBucket {
+  /** Group label (a model-supplied label, or a canonical heuristic one). */
+  readonly label: string;
+  /** Files in this bucket, ordered by reading order then path. */
+  readonly files: readonly FileChange[];
+}
+
+/** Directory path segments that mark a file as generated/derived output. */
+const GENERATED_DIRS = new Set([
+  'dist',
+  'build',
+  'out',
+  'coverage',
+  'node_modules',
+  'vendor',
+  '.next',
+]);
+
+/** Exact basenames of well-known dependency lockfiles (always Generated). */
+const LOCKFILES = new Set([
+  'package-lock.json',
+  'npm-shrinkwrap.json',
+  'yarn.lock',
+  'pnpm-lock.yaml',
+  'composer.lock',
+  'cargo.lock',
+  'poetry.lock',
+  'gemfile.lock',
+  'go.sum',
+]);
+
+/** Directory segments that mark a file as a test. */
+const TEST_DIRS = new Set(['test', 'tests', '__tests__', '__mocks__', 'spec', 'e2e']);
+
+/**
+ * Classify a path into one of the canonical {@link READING_BUCKETS} using only
+ * path/extension patterns — a PURE fallback used to bucket & order the file tree
+ * BEFORE any AI review exists (progressive loading), and to give a sensible
+ * bucket to any file a review forgot to mention.
+ *
+ * The checks are ordered most-specific first so a file that could match several
+ * categories lands in the right one: a lockfile (`package-lock.json`) is
+ * `Generated`, not `Config & CI`, even though it is JSON; a workflow under
+ * `.github/` is `Config & CI` even though it is YAML; `foo.test.ts` is `Tests`,
+ * not `Source`.
+ *
+ * @param path Head-side file path (POSIX `/` separators).
+ * @returns The canonical bucket label.
+ */
+export function heuristicBucket(path: string): HeuristicBucket {
+  const segments = path.split('/');
+  const base = (segments[segments.length - 1] ?? '').toLowerCase();
+  const lowerSegs = segments.map((s) => s.toLowerCase());
+  const dirSegs = lowerSegs.slice(0, -1);
+
+  // 1. Generated / derived output & lockfiles — highest precedence.
+  if (
+    LOCKFILES.has(base) ||
+    base.endsWith('.lock') ||
+    base.endsWith('.min.js') ||
+    base.endsWith('.min.css') ||
+    base.endsWith('.map') ||
+    /\.generated\./.test(base) ||
+    base.endsWith('.snap') ||
+    dirSegs.some((seg) => GENERATED_DIRS.has(seg))
+  ) {
+    return 'Generated';
+  }
+
+  // 2. Config & CI — dotfiles, CI directories, and config-shaped files.
+  if (
+    dirSegs.includes('.github') ||
+    dirSegs.includes('.circleci') ||
+    dirSegs.includes('.gitlab') ||
+    base.startsWith('.') || // .gitignore, .eslintrc, .prettierrc, .npmrc, …
+    base.startsWith('dockerfile') ||
+    base === 'makefile' ||
+    base === 'package.json' ||
+    /^tsconfig(\..+)?\.json$/.test(base) ||
+    /\.config\.[cm]?[jt]sx?$/.test(base) || // vitest.config.ts, eslint.config.mjs
+    base.endsWith('.yml') ||
+    base.endsWith('.yaml') ||
+    base.endsWith('.toml') ||
+    base.endsWith('.ini') ||
+    base.endsWith('.cfg') ||
+    base.endsWith('rc')
+  ) {
+    return 'Config & CI';
+  }
+
+  // 3. Docs — markdown/prose and the docs tree.
+  if (
+    base.endsWith('.md') ||
+    base.endsWith('.mdx') ||
+    base.endsWith('.rst') ||
+    base.endsWith('.txt') ||
+    base === 'license' ||
+    base === 'notice' ||
+    dirSegs.includes('docs')
+  ) {
+    return 'Docs';
+  }
+
+  // 4. Tests — test/spec files and test directories.
+  if (
+    /\.(test|spec)\.[cm]?[jt]sx?$/.test(base) ||
+    /_(test|spec)\.[a-z]+$/.test(base) || // foo_test.go, foo_test.py
+    dirSegs.some((seg) => TEST_DIRS.has(seg))
+  ) {
+    return 'Tests';
+  }
+
+  // 5. Everything else is source.
+  return 'Source';
+}
+
+/** Canonical reading rank of a bucket label (unknown labels sort last). */
+function canonicalBucketRank(label: string): number {
+  const idx = (READING_BUCKETS as readonly string[]).indexOf(label);
+  return idx === -1 ? READING_BUCKETS.length : idx;
+}
+
+/**
+ * Group changed files into reading-ordered buckets.
+ *
+ * With no `review` (or a review that omits reading guidance) this is the PURE
+ * heuristic fallback: files are bucketed by {@link heuristicBucket} and the
+ * buckets come out in {@link READING_BUCKETS} order (source → tests → docs →
+ * config/CI → generated), alphabetical within each bucket. This is what the tree
+ * shows before the AI review lands.
+ *
+ * With a `review`, each file is placed using the model's `bucket`/`readingOrder`
+ * guidance, and the result is ordered by that guidance (buckets by their
+ * earliest `readingOrder`, files within a bucket by `readingOrder` then path).
+ * Normalization is defensive: a file the review never mentioned (or mentioned
+ * with a blank bucket / non-finite order) falls back to its heuristic bucket and
+ * sorts after the explicitly-ranked files; review entries for paths that are not
+ * in `files` (bogus/unknown paths) are ignored rather than creating phantom rows.
+ *
+ * Pure — no `vscode` — so both the extension tree and tests can call it.
+ *
+ * @param files  The actual changed files to bucket (the source of truth for rows).
+ * @param review The AI review whose per-file guidance drives ordering, if any.
+ * @returns Non-empty buckets in reading order, each with its files in reading order.
+ */
+export function bucketFiles(
+  files: readonly FileChange[],
+  review?: ReviewResult | null,
+): FileBucket[] {
+  // Index the review's per-file guidance by path (defensive against blanks).
+  const guidance = new Map<string, { bucket?: string; readingOrder?: number }>();
+  for (const entry of review?.files ?? []) {
+    if (typeof entry.path === 'string' && entry.path.length > 0) {
+      guidance.set(entry.path, {
+        bucket: typeof entry.bucket === 'string' ? entry.bucket.trim() : undefined,
+        readingOrder:
+          typeof entry.readingOrder === 'number' && Number.isFinite(entry.readingOrder)
+            ? entry.readingOrder
+            : undefined,
+      });
+    }
+  }
+
+  interface Placed {
+    readonly file: FileChange;
+    readonly label: string;
+    /** Finite when the review ranked it; undefined = fallback (sorts last). */
+    readonly order?: number;
+  }
+
+  const placed: Placed[] = files.map((file) => {
+    const g = guidance.get(file.path);
+    const label = g?.bucket && g.bucket.length > 0 ? g.bucket : heuristicBucket(file.path);
+    return { file, label, order: g?.readingOrder };
+  });
+
+  // Collect files per bucket, preserving first-seen label spelling.
+  const byLabel = new Map<string, Placed[]>();
+  for (const p of placed) {
+    const list = byLabel.get(p.label);
+    if (list) list.push(p);
+    else byLabel.set(p.label, [p]);
+  }
+
+  const buckets: FileBucket[] = [];
+  for (const [label, list] of byLabel) {
+    list.sort(comparePlaced);
+    buckets.push({ label, files: list.map((p) => p.file) });
+  }
+
+  // Order buckets: those with an explicit (finite) reading rank come first, by
+  // their earliest rank; the rest fall back to canonical heuristic order.
+  buckets.sort((a, b) => {
+    const ao = earliestOrder(byLabel.get(a.label)!);
+    const bo = earliestOrder(byLabel.get(b.label)!);
+    const aHas = ao !== undefined;
+    const bHas = bo !== undefined;
+    if (aHas && bHas) return ao - bo || a.label.localeCompare(b.label);
+    if (aHas !== bHas) return aHas ? -1 : 1;
+    // Neither ranked → canonical heuristic order, then alphabetical.
+    return (
+      canonicalBucketRank(a.label) - canonicalBucketRank(b.label) ||
+      a.label.localeCompare(b.label)
+    );
+  });
+
+  return buckets;
+
+  function comparePlaced(a: Placed, b: Placed): number {
+    const ao = a.order ?? Number.POSITIVE_INFINITY;
+    const bo = b.order ?? Number.POSITIVE_INFINITY;
+    return ao - bo || a.file.path.localeCompare(b.file.path);
+  }
+
+  function earliestOrder(list: Placed[]): number | undefined {
+    let min: number | undefined;
+    for (const p of list) {
+      if (p.order !== undefined && (min === undefined || p.order < min)) min = p.order;
+    }
+    return min;
+  }
+}
+
 /**
  * A single hunk rendered for the prompt, carrying its request-local alias and
  * the (possibly truncated) excerpt.
@@ -220,8 +466,16 @@ schema. Requirements:
   risks. Empty array only if there is genuinely nothing critical.
 - "flow": an ordered list of steps a reviewer should read the change in to
   understand it, from entry point to effect. Each step is one short sentence.
-- "files": for each meaningfully changed file, its role in the change and a
-  short note on what it contributes.
+- "files": for each meaningfully changed file, its role in the change, a short
+  note on what it contributes, and reading guidance:
+  - "bucket": a short group label for the file (e.g. "Core logic", "API surface",
+    "Tests", "Docs", "Config & CI", "Generated"). Files that share a concern
+    share the same label.
+  - "readingOrder": an integer rank (0 = read first) giving the order a reviewer
+    should read the files in. Order the files so that each is comprehensible from
+    the ones before it: foundational/core code and the things others depend on
+    first, then the code built on top of them, then tests, then docs — with
+    generated files, lockfiles, and CI/config configuration LAST.
 - "hunks": you MUST return exactly one entry for EVERY hunk alias listed above.
   There are ${hunkCount} hunk(s): ${aliasList}. Every one of these aliases MUST
   appear in "hunks" exactly once — do not skip any, and do not merge several
@@ -296,11 +550,21 @@ export function buildReviewSchema(hunkCount = 0): JsonSchema {
         items: {
           type: 'object',
           additionalProperties: false,
-          required: ['path', 'role', 'note'],
+          required: ['path', 'role', 'note', 'bucket', 'readingOrder'],
           properties: {
             path: { type: 'string' },
             role: { type: 'string' },
             note: { type: 'string' },
+            bucket: {
+              type: 'string',
+              description:
+                'Short reading-group label for the file (e.g. "Core logic", "Tests", "Config & CI").',
+            },
+            readingOrder: {
+              type: 'integer',
+              description:
+                'Reading rank (0 = read first): dependencies/core first, generated files and config last.',
+            },
           },
         },
       },

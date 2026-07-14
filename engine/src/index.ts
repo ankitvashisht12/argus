@@ -16,12 +16,19 @@ export {
   DEFAULT_MODEL,
   DEFAULT_FALLBACK_MODEL,
   DEFAULT_TIMEOUT_MS,
+  REVIEW_TIMEOUT_BASE_MS,
+  REVIEW_TIMEOUT_PER_HUNK_MS,
+  REVIEW_TIMEOUT_PER_KB_MS,
+  REVIEW_TIMEOUT_CAP_MS,
+  computeReviewTimeoutMs,
+  resolveReviewTimeoutMs,
   isModelAvailabilityError,
   buildStructuredArgs,
   buildStreamArgs,
 } from './agent/claude.js';
 export type {
   ClaudeAgentOptions,
+  ReviewTimeoutInput,
   SpawnLike,
   SpawnLikeOptions,
   ChildProcessLike,
@@ -51,6 +58,9 @@ export {
   buildReviewSchema,
   firstChangedLine,
   normalizeReview,
+  bucketFiles,
+  heuristicBucket,
+  READING_BUCKETS,
   DEFAULT_DIGEST_BUDGET,
   LARGE_DIGEST_BUDGET,
   LARGE_DIGEST_FILE_THRESHOLD,
@@ -59,6 +69,8 @@ export type {
   Digest,
   DigestHunk,
   DigestBudget,
+  FileBucket,
+  HeuristicBucket,
 } from './review/pipeline.js';
 
 // store

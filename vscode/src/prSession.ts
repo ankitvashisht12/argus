@@ -45,6 +45,7 @@ import {
   buildReviewSchema,
   normalizeReview,
   parseUnifiedDiff,
+  resolveReviewTimeoutMs,
   stableStringify,
 } from '@argus/engine';
 import type {
@@ -103,6 +104,14 @@ export interface PrSessionLoadOptions {
   readonly storageDir: string;
   /** Model id for the review + chat calls (defaults to the engine default). */
   readonly agentModel?: string;
+  /**
+   * Live accessor for the `argus.reviewTimeoutSeconds` setting (seconds). A
+   * positive value overrides the size-scaled review timeout; `0`/`undefined`
+   * means "automatic". Read fresh on every review so changing the setting and
+   * regenerating takes effect immediately. Defaults to reading the VS Code
+   * configuration; injectable for tests.
+   */
+  readonly reviewTimeoutSeconds?: () => number | undefined;
   /** Progress messages for a status bar / notification while loading. */
   readonly onProgress?: (message: string) => void;
   /**
@@ -187,6 +196,7 @@ interface PrSessionDeps {
   readonly files: FileChange[];
   readonly digest: Digest;
   readonly model: string;
+  readonly reviewTimeoutSeconds: () => number | undefined;
   readonly review: NormalizedReview | null;
   readonly reviewError: string | null;
   readonly reviewed: Set<string>;
@@ -221,6 +231,7 @@ export class PrSession {
   readonly #files: FileChange[];
   readonly #digest: Digest;
   readonly #model: string;
+  readonly #reviewTimeoutSeconds: () => number | undefined;
   readonly #reviewed: Set<string>;
   readonly #chatHistory: ChatMessage[];
 
@@ -249,6 +260,7 @@ export class PrSession {
     this.#files = deps.files;
     this.#digest = deps.digest;
     this.#model = deps.model;
+    this.#reviewTimeoutSeconds = deps.reviewTimeoutSeconds;
     this.#review = deps.review;
     this.#reviewError = deps.reviewError;
     // Derive the initial lifecycle from the constructed review: a demo session
@@ -295,6 +307,12 @@ export class PrSession {
     const progress = options.onProgress ?? (() => undefined);
     const gh = options.gh ?? new GhClient();
     const agent = options.agent ?? new ClaudeAgent();
+    const reviewTimeoutSeconds =
+      options.reviewTimeoutSeconds ??
+      (() =>
+        vscode.workspace
+          .getConfiguration('argus')
+          .get<number>('reviewTimeoutSeconds'));
 
     await PrSession.#assertGhReady(gh);
 
@@ -321,6 +339,7 @@ export class PrSession {
       files,
       digest,
       model,
+      reviewTimeoutSeconds,
       review: null,
       reviewError: null,
       reviewed,
@@ -358,6 +377,8 @@ export class PrSession {
       files: fixture.files,
       digest: buildDigest(fixture.files),
       model: DEFAULT_MODEL,
+      // Demo sessions never run a live review, so the timeout is never consulted.
+      reviewTimeoutSeconds: () => undefined,
       review: fixture.review,
       reviewError: null,
       reviewed: new Set<string>(),
@@ -622,6 +643,13 @@ export class PrSession {
     }
 
     progress('Generating AI review…');
+    // Scale the wall-clock timeout to the work: the prompt now requires a note
+    // for every hunk, so a fixed 90s default times out real PRs. A positive
+    // `argus.reviewTimeoutSeconds` overrides the computed value.
+    const timeoutMs = resolveReviewTimeoutMs(this.#reviewTimeoutSeconds(), {
+      hunkCount: this.#digest.hunks.length,
+      digestChars: this.#digest.totalChars,
+    });
     try {
       const prompt = buildReviewPrompt(this.#meta, this.#digest);
       const result = await this.#agent.runStructured<ReviewResult>(
@@ -632,6 +660,7 @@ export class PrSession {
         buildReviewSchema(this.#digest.hunks.length),
         {
           model: this.#model,
+          timeoutMs,
           onModelFallback: (fallback, original) =>
             progress(`Model ${original} unavailable; retried with ${fallback}.`),
         },
@@ -644,10 +673,25 @@ export class PrSession {
       this.#setReview(normalized);
       if (this.#cache && cacheKey) await this.#cache.set(cacheKey, normalized);
     } catch (error) {
-      this.#setReviewError(
-        error instanceof Error ? error.message : String(error),
-      );
+      const message = error instanceof Error ? error.message : String(error);
+      this.#setReviewError(this.#reviewErrorMessage(message, timeoutMs));
     }
+  }
+
+  /**
+   * Turn a raw review failure into an actionable message. A timeout gets a
+   * specific call to action (Regenerate + the `argus.reviewTimeoutSeconds`
+   * setting) rather than the bare "Claude Code timed out." from the engine.
+   */
+  #reviewErrorMessage(rawMessage: string, timeoutMs: number): string {
+    if (!/timed out/i.test(rawMessage)) return rawMessage;
+    const seconds = Math.round(timeoutMs / 1000);
+    return (
+      `The AI review timed out after ${seconds}s. This PR may be large or slow ` +
+      'to analyze — run “ARGUS: Regenerate Review” to try again, or raise the ' +
+      '“argus.reviewTimeoutSeconds” setting to allow more time. The diff is ' +
+      'still available without AI.'
+    );
   }
 
   #setReview(review: NormalizedReview): void {

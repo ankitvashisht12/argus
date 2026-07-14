@@ -125,6 +125,21 @@ export interface FileReview {
   readonly role: string;
   /** Short note about the file's contribution to the PR. */
   readonly note: string;
+  /**
+   * Short reading-guidance group label for this file (e.g. `Core logic`,
+   * `API surface`, `Tests`, `Config & CI`). Files that share a concern share a
+   * label. Optional on the type (so cached / fixture reviews and defensive
+   * normalization tolerate its absence) even though the review schema requires
+   * it; a missing/blank value falls back to a heuristic bucket.
+   */
+  readonly bucket?: string;
+  /**
+   * Integer rank (0 = read first) giving the order a reviewer should read files
+   * in, arranged so each file is comprehensible from the ones before it
+   * (dependencies/core first; generated files, lockfiles and CI/config last).
+   * Optional for the same reason as {@link bucket}.
+   */
+  readonly readingOrder?: number;
 }
 
 /**

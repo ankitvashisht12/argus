@@ -1,20 +1,33 @@
 /**
  * Changed-files TreeView (`argus.files`, primary sidebar).
  *
- * Presents the loaded PR as a header node plus its changed files grouped by
- * directory (with VS Code-style compact folders). Each file shows a status
- * letter and ±add/delete counts, a status codicon, and — once the user marks it
- * reviewed — a check badge and dimmed label (via a {@link vscode.FileDecorationProvider}).
- * Selecting a file opens the native base↔head diff; a per-item action toggles
- * reviewed state. The provider re-binds and rebuilds whenever the shared session
- * changes and follows the session's review / reviewed-state events.
+ * Presents the loaded PR as a header node plus its changed files BUCKETED and
+ * ORDERED FOR READING: a collapsible group node per bucket (e.g. `Core logic`,
+ * `Tests`, `Config & CI`, `Generated`), with the files inside each bucket in the
+ * order that makes later files comprehensible from earlier ones. Before the AI
+ * review lands the tree uses a pure path/extension heuristic (source → tests →
+ * docs → config/CI → generated, alphabetical within a bucket); once the review
+ * arrives it re-sorts by the model's per-file bucket/readingOrder guidance (the
+ * existing `onDidChangeReview` refresh drives the re-sort). See
+ * {@link readingPlan} / `bucketFiles` in `@argus/engine`.
+ *
+ * File rows are FLAT under each bucket (not directory-nested): directory
+ * grouping would re-sort files by folder name and destroy the reading order that
+ * is the whole point here, so the parent directory is shown as the row's
+ * description instead. Each file still shows a status letter and ±add/delete
+ * counts, a status codicon, and — once the user marks it reviewed — a check
+ * badge and dimmed label (via a {@link vscode.FileDecorationProvider}). Selecting
+ * a file opens the native base↔head diff; a per-item action toggles reviewed
+ * state. The provider re-binds and rebuilds whenever the shared session changes
+ * and follows the session's review / reviewed-state events.
  *
  * @module
  */
 
 import * as vscode from 'vscode';
 
-import type { FileChange, FileStatus } from '@argus/engine';
+import { bucketFiles } from '@argus/engine';
+import type { FileBucket, FileChange, FileStatus } from '@argus/engine';
 
 import type { PrSession, SessionAccessor } from './prSession';
 import { parseArgusUri } from './contentProvider';
@@ -195,6 +208,32 @@ export function baseName(path: string): string {
   return slash === -1 ? path : path.slice(slash + 1);
 }
 
+/** Parent directory of a path (portion before the last `/`), `''` at the root. */
+export function parentDir(path: string): string {
+  const slash = path.lastIndexOf('/');
+  return slash === -1 ? '' : path.slice(0, slash);
+}
+
+/**
+ * Description for a flat file row under a bucket: the parent directory (so the
+ * file's location is still visible without directory nesting) followed by the
+ * `{@link fileDescription}` status/±counts. Root-level files show just the counts.
+ */
+export function fileRowDescription(file: FileChange): string {
+  const dir = parentDir(file.path);
+  return dir ? `${dir}  ·  ${fileDescription(file)}` : fileDescription(file);
+}
+
+/**
+ * Derive the reading-ordered bucket plan for a session: the model's per-file
+ * bucket/readingOrder guidance once the review has landed, else the pure
+ * path/extension heuristic. A thin wrapper over the engine's `bucketFiles` so
+ * the tree never reaches past `session.review` into review internals.
+ */
+export function readingPlan(session: PrSession): FileBucket[] {
+  return bucketFiles(session.files, session.review?.review ?? null);
+}
+
 /** The `resourceUri` used for a file item, keyed by the decoration provider. */
 export function fileResourceUri(path: string): vscode.Uri {
   return vscode.Uri.from({ scheme: FILE_URI_SCHEME, path: `/${path}` });
@@ -212,9 +251,9 @@ export function pathFromResourceUri(uri: vscode.Uri): string {
 interface HeaderNode {
   readonly kind: 'header';
 }
-interface DirNode {
-  readonly kind: 'dir';
-  readonly dir: FileTreeDir;
+interface BucketNode {
+  readonly kind: 'bucket';
+  readonly bucket: FileBucket;
 }
 interface FileNode {
   readonly kind: 'file';
@@ -225,7 +264,7 @@ interface MessageNode {
   readonly message: string;
 }
 
-type TreeNode = HeaderNode | DirNode | FileNode | MessageNode;
+type TreeNode = HeaderNode | BucketNode | FileNode | MessageNode;
 
 /* -------------------------------------------------------------------------- */
 /* Reviewed-state file decorations (check badge + dim)                        */
@@ -349,19 +388,15 @@ class ArgusTreeProvider
           },
         ];
       }
-      const tree = buildFileTree(session.files);
+      const buckets = readingPlan(session);
       return [
         { kind: 'header' },
-        ...tree.dirs.map((dir): TreeNode => ({ kind: 'dir', dir })),
-        ...tree.files.map((file): TreeNode => ({ kind: 'file', file })),
+        ...buckets.map((bucket): TreeNode => ({ kind: 'bucket', bucket })),
       ];
     }
 
-    if (element.kind === 'dir') {
-      return [
-        ...element.dir.dirs.map((dir): TreeNode => ({ kind: 'dir', dir })),
-        ...element.dir.files.map((file): TreeNode => ({ kind: 'file', file })),
-      ];
+    if (element.kind === 'bucket') {
+      return element.bucket.files.map((file): TreeNode => ({ kind: 'file', file }));
     }
 
     return [];
@@ -373,8 +408,8 @@ class ArgusTreeProvider
         return this.#messageItem(node);
       case 'header':
         return this.#headerItem();
-      case 'dir':
-        return this.#dirItem(node);
+      case 'bucket':
+        return this.#bucketItem(node);
       case 'file':
         return this.#fileItem(node);
     }
@@ -407,17 +442,16 @@ class ArgusTreeProvider
     return item;
   }
 
-  #dirItem(node: DirNode): vscode.TreeItem {
+  #bucketItem(node: BucketNode): vscode.TreeItem {
+    const { bucket } = node;
     const item = new vscode.TreeItem(
-      node.dir.name,
+      bucket.label,
       vscode.TreeItemCollapsibleState.Expanded,
     );
-    item.iconPath = vscode.ThemeIcon.Folder;
-    item.resourceUri = vscode.Uri.from({
-      scheme: FILE_URI_SCHEME,
-      path: `/${node.dir.path}`,
-    });
-    item.contextValue = 'argusDir';
+    const count = bucket.files.length;
+    item.description = `${count} file${count === 1 ? '' : 's'}`;
+    item.iconPath = new vscode.ThemeIcon('folder');
+    item.contextValue = 'argusBucket';
     return item;
   }
 
@@ -430,7 +464,7 @@ class ArgusTreeProvider
       baseName(file.path),
       vscode.TreeItemCollapsibleState.None,
     );
-    item.description = fileDescription(file);
+    item.description = fileRowDescription(file);
     item.resourceUri = fileResourceUri(file.path);
     item.iconPath = statusThemeIcon(file.status);
     item.tooltip = fileTooltip(file);

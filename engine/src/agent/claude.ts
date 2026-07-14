@@ -36,6 +36,71 @@ export const DEFAULT_FALLBACK_MODEL = 'claude-sonnet-5';
 /** Default hard wall-clock timeout for a single CLI invocation. */
 export const DEFAULT_TIMEOUT_MS = 90_000;
 
+/* -------------------------------------------------------------------------- */
+/* Structured-review timeout scaling                                           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Base wall-clock budget for a structured review, before any per-hunk / per-KB
+ * additions. A tiny PR still gets this much headroom.
+ */
+export const REVIEW_TIMEOUT_BASE_MS = 120_000;
+/**
+ * Added budget per hunk. The review prompt now requires a note for *every*
+ * hunk, so wall-clock cost grows roughly linearly with hunk count.
+ */
+export const REVIEW_TIMEOUT_PER_HUNK_MS = 15_000;
+/** Added budget per kilobyte of digest text handed to the model. */
+export const REVIEW_TIMEOUT_PER_KB_MS = 1_000;
+/** Hard ceiling on the *computed* timeout, so a huge PR can't wedge forever. */
+export const REVIEW_TIMEOUT_CAP_MS = 600_000;
+
+/** Inputs for {@link computeReviewTimeoutMs} — the size levers of a digest. */
+export interface ReviewTimeoutInput {
+  /** Number of hunks the model must annotate (digest.hunks.length). */
+  readonly hunkCount: number;
+  /** Total characters of digest excerpt text (digest.totalChars). */
+  readonly digestChars: number;
+}
+
+/**
+ * Scale the structured-review timeout to the size of the work: a base budget
+ * plus a per-hunk increment (one required note each) plus a per-KB increment
+ * for the raw text volume, clamped to {@link REVIEW_TIMEOUT_CAP_MS}. Pure and
+ * deterministic. Negative/NaN inputs are floored to zero so the result is never
+ * below the base budget.
+ */
+export function computeReviewTimeoutMs(input: ReviewTimeoutInput): number {
+  const hunks = Number.isFinite(input.hunkCount) ? Math.max(0, input.hunkCount) : 0;
+  const chars = Number.isFinite(input.digestChars) ? Math.max(0, input.digestChars) : 0;
+  const raw =
+    REVIEW_TIMEOUT_BASE_MS +
+    hunks * REVIEW_TIMEOUT_PER_HUNK_MS +
+    Math.ceil(chars / 1024) * REVIEW_TIMEOUT_PER_KB_MS;
+  return Math.min(raw, REVIEW_TIMEOUT_CAP_MS);
+}
+
+/**
+ * Resolve the effective review timeout in milliseconds. A positive, finite
+ * `overrideSeconds` (e.g. from a user setting) wins verbatim — the user's
+ * explicit choice is honored and not clamped, so very large PRs can be given
+ * more room than the auto cap. Anything else (0, undefined, null, NaN,
+ * negative) falls back to the size-scaled {@link computeReviewTimeoutMs}.
+ */
+export function resolveReviewTimeoutMs(
+  overrideSeconds: number | null | undefined,
+  input: ReviewTimeoutInput,
+): number {
+  if (
+    typeof overrideSeconds === 'number' &&
+    Number.isFinite(overrideSeconds) &&
+    overrideSeconds > 0
+  ) {
+    return Math.round(overrideSeconds * 1000);
+  }
+  return computeReviewTimeoutMs(input);
+}
+
 const NOT_FOUND_CODE = 'CLAUDE_NOT_FOUND';
 const NOT_FOUND_MESSAGE =
   'The `claude` CLI was not found. Install Claude Code and confirm `claude --version` runs in your shell. ' +

@@ -6,6 +6,7 @@ import {
   diffUrisForFile,
   errorBanner,
   parseArgusUri,
+  placeholderBanner,
 } from '../src/contentProvider';
 import { parseArgusUri as parseSidebarUri } from '../src/sidebar';
 
@@ -140,5 +141,34 @@ describe('errorBanner', () => {
     expect(text).toContain('base');
     expect(text).toContain('a.ts');
     expect(text).toContain('boom');
+  });
+});
+
+describe('placeholderBanner (no session / restored diff tab)', () => {
+  const parts = {
+    side: 'base' as const,
+    owner: 'acme',
+    repo: 'widgets',
+    number: 482,
+    path: '.github/workflows/pr-validation.yml',
+    sha: 'base111',
+  };
+
+  it('names the PR (owner/repo/number) and the actionable reload command', () => {
+    const text = placeholderBanner(parts);
+    expect(text).toContain('#482');
+    expect(text).toContain('acme/widgets');
+    expect(text).toContain('.github/workflows/pr-validation.yml');
+    expect(text).toContain('ARGUS: Review PR');
+  });
+
+  it('is NOT the scary load-error text (round-trips from a real URI)', () => {
+    // The exact bug: a restored argus:// diff tab produced the load-error banner.
+    // The placeholder must never read as a failure.
+    const uri = buildArgusUri(parts);
+    const text = placeholderBanner(parseArgusUri(uri));
+    expect(text).not.toContain('could not load');
+    expect(text).not.toContain('No pull request is loaded');
+    expect(text).not.toContain('load error');
   });
 });
