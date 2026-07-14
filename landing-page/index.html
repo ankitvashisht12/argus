@@ -3,21 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Argus — Review long PRs like the author walked you through them.</title>
-<meta name="description" content="Argus is a local-first AI code reviewer. A single Go binary that infers a change's intent, orders the files into a guided reading path, and explains why each hunk changed in plain language — with Claude a keystroke away. Drives your own Claude CLI, on your machine.">
+<title>Argus — Review the PR like the author walked you through it.</title>
+<meta name="description" content="Argus is a local-first AI PR reviewer for VS Code. It reviews a GitHub PR through a skeptic's lens — every hunk gets why-it-changed and look-out-for notes as native comment threads, plus an Overview tab with the PR's intent and critical things to know. Drives your own gh and Claude CLIs, on your machine.">
 
-<!-- Deliberately dark-only: Argus is a dark-native, developer terminal tool. No light mode. -->
+<!-- Deliberately dark-only: Argus is a dark-native, developer tool. No light mode. -->
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#05110b">
 
 <!-- Open Graph / Twitter. og:image + og:url omitted deliberately: no real share image or canonical domain to point at yet (not fabricating one). -->
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Argus">
-<meta property="og:title" content="Argus — review long PRs like the author walked you through them">
-<meta property="og:description" content="A local-first AI code reviewer that infers a change's intent, orders the files, and explains why each hunk changed — so you read a long PR like the author walked you through it. One Go binary, your Claude subscription, nothing leaves the laptop.">
+<meta property="og:title" content="Argus — review the PR like the author walked you through it">
+<meta property="og:description" content="A local-first AI PR reviewer inside VS Code. Every hunk gets a skeptic's why-it-changed and look-out-for note as a native comment thread, with an Overview tab for the PR's intent and critical things to know. Drives your own gh and Claude CLIs — nothing leaves the laptop.">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="Argus — the local-first PR reviewer">
-<meta name="twitter:description" content="Infers intent, orders the files, and explains why each hunk changed in plain language — so a long PR reads like the author walked you through it. One Go binary, driving your own Claude CLI.">
+<meta name="twitter:title" content="Argus — the local-first PR reviewer for VS Code">
+<meta name="twitter:description" content="Reviews a GitHub PR through a skeptic's lens — why-it-changed and look-out-for notes on every hunk, right where you read the diff in VS Code. Drives your own gh and Claude CLIs.">
 
 <!-- Inline SVG favicon (the Argus eye): no external request -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2305110b'/%3E%3Cpath d='M4 16 Q16 6 28 16 Q16 26 4 16 Z' fill='none' stroke='%234dffb0' stroke-width='1.5'/%3E%3Cpath d='M16 10 L22 16 L16 22 L10 16 Z' fill='none' stroke='%234dffb0' stroke-width='1.3'/%3E%3Ccircle cx='16' cy='16' r='2.4' fill='%234dffb0'/%3E%3C/svg%3E">
@@ -264,7 +264,7 @@ a{color:inherit}
 .stage__fig--std{max-width:640px}
 .stage__fig--wide{max-width:100%}
 
-/* Upcoming passes (03–04): not shipped in v1 — marked in the moon-blue "waiting" hue, never asserted as present */
+/* "In progress" pill (moon-blue "waiting" hue): for surfaces not yet shipped — never asserted as present */
 .stage--next .stage__num{color:var(--waiting);text-shadow:0 0 18px rgba(106,166,255,.28)}
 .stage--next .stage__kicker{color:var(--waiting)}
 .stage__next{display:inline-block;margin-right:.6ch;font-family:var(--font-mono);font-size:var(--text-xs);font-weight:600;text-transform:uppercase;letter-spacing:.14em;line-height:1.4;color:var(--waiting);background:var(--waiting-soft);border:1px solid rgba(106,166,255,.32);border-radius:999px;padding:.1em .7em;vertical-align:middle}
@@ -287,7 +287,7 @@ a{color:inherit}
 .reorder__h.on{color:var(--em-bright)}
 .reorder__pre{font-family:var(--font-mono);font-size:var(--text-xs);line-height:1.85;white-space:pre;margin:0}
 
-/* stage 05 — review surface, three panes (argus' own TUI content; not OS/IDE chrome) */
+/* stage 05 — review surface, three panes (argus' own review content; not OS/IDE chrome) */
 .surface{display:grid;grid-template-columns:minmax(0,.8fr) minmax(0,1.5fr) minmax(0,.95fr)}
 .surface__pane{padding:var(--space-md);min-width:0}
 .surface__pane + .surface__pane{border-left:var(--rule-hair) solid var(--line)}
@@ -395,7 +395,7 @@ a{color:inherit}
       <span class="eye" aria-hidden="true"></span>
       <span class="brand__word">argus</span>
     </a>
-    <pre class="nav__cmd" aria-label="Section navigation"><span class="p">&gt;</span>argus <a href="#the-pain">--pain</a> <a href="#pipeline">--pipeline</a> <a href="#local">--local</a> <a href="#install">--install</a> <a href="https://github.com/ankitvashisht/argus">--source</a><span class="caret" aria-hidden="true">▮</span></pre>
+    <pre class="nav__cmd" aria-label="Section navigation"><span class="p">&gt;</span>argus <a href="#the-pain">--pain</a> <a href="#pipeline">--pipeline</a> <a href="#local">--local</a> <a href="#install">--install</a> <a href="https://github.com/ankitvashisht12/argus">--source</a><span class="caret" aria-hidden="true">▮</span></pre>
     <a class="btn btn--gem nav__cta" href="#install">Install</a>
   </div>
 </header>
@@ -408,25 +408,25 @@ a{color:inherit}
       <div class="hero__grid">
         <div class="hero__lead">
           <h1 class="hero__h1">Review the PR <em>like the author walked&nbsp;you through it.</em></h1>
-          <p class="hero__lede">Diffs tell you what changed. Argus infers <em>why</em> — then orders the files and explains every hunk in plain language, so the boilerplate is safe to skim and your judgment goes where it matters.</p>
-          <p class="hero__cmd"><code><span class="p">$</span> go install github.com/ankitvashisht/argus@latest</code></p>
+          <p class="hero__lede">Diffs tell you what changed. Argus reviews the PR through a <em>skeptic's</em> lens — every hunk gets a <em>why it changed</em> and a <em>look out for</em> note, right where you read the diff in VS Code.</p>
+          <p class="hero__cmd"><a href="https://marketplace.visualstudio.com/items?itemName=ankitvashisht12.argus-review"><code><span class="p">&gt;</span> code --install argus</code></a></p>
           <div class="hero__cta">
-            <a class="btn btn--gem" href="#install">Install Argus</a>
+            <a class="btn btn--gem" href="https://marketplace.visualstudio.com/items?itemName=ankitvashisht12.argus-review">Install for VS Code</a>
             <a class="btn btn--ghost" href="#pipeline">See the pipeline</a>
           </div>
-          <p class="hero__note">one Go binary · shells out to git &amp; your Claude CLI · your code never leaves the laptop</p>
+          <p class="hero__note">one VS Code extension · drives your own gh &amp; Claude CLIs · your code never leaves the laptop</p>
         </div>
 
-        <figure class="term" role="img" aria-label="An Argus session starting: it fetches, reads the diff locally through git, infers the change's intent from the diff and the repo files it reads for context, then writes a whole-change brief, reorders the files, and renders the explanations inline.">
-          <div class="term__bar"><span class="c-em">argus</span> <b>main…fix/redact-secret-keys</b> <span class="c-dim">·</span> <span class="c-mut">23 files</span></div>
+        <figure class="term" role="img" aria-label="An Argus review starting inside VS Code: the command palette runs ARGUS: Review PR, it fetches the GitHub PR through the gh CLI, opens every diff so you can start reading immediately, then streams the skeptic review — a why-it-changed and look-out-for note anchored to each hunk — and readies the Overview tab and chat panel.">
+          <div class="term__bar"><span class="c-em">argus</span> <b>acme/api#482</b> <span class="c-dim">·</span> <span class="c-mut">23 files</span></div>
           <div class="term__scroll">
-<pre class="term__pre"><span class="c-em">&gt;</span> argus --fetch
-<span class="ok c-mut">fetched origin  ·  base <span class="c-ink">main</span> … head <span class="c-ink">fix/redact-secret-keys</span></span>
-<span class="ok c-mut">diff read locally · git only · <span class="c-ink">no upload · no 20k-line cap</span></span>
-<span class="c-wait">⠋</span> <span class="c-mut">inferring intent — from the diff, reading repo files for context</span>
+<pre class="term__pre"><span class="c-em">⌘⇧P</span> ARGUS: Review PR…
+<span class="ok c-mut">fetched <span class="c-ink">acme/api#482</span> via your gh CLI · <span class="c-ink">nothing uploaded</span></span>
+<span class="ok c-mut">23 files · diffs open · <span class="c-ink">start reading now</span></span>
+<span class="c-wait">⠋</span> <span class="c-mut">skeptic review streaming — why it changed · look out for</span>
 <span class="c-pale">“harden secret redaction before any prompt leaves the process”</span>
-<span class="ok c-mut">brief written · files reordered · explanations inline</span>
-<span class="c-em">&gt;</span> <span class="c-mut">press <span class="c-ink">c</span> to ask Claude about any line</span> <span class="caret" aria-hidden="true">▮</span></pre>
+<span class="ok c-mut">overview ready · notes anchored to each hunk</span>
+<span class="c-em">&gt;</span> <span class="c-mut">open the <span class="c-ink">Overview</span> tab, or ask Argus in chat</span> <span class="caret" aria-hidden="true">▮</span></pre>
           </div>
         </figure>
       </div>
@@ -467,7 +467,7 @@ a{color:inherit}
     <div class="wrap">
       <div class="pipe__intro">
         <p class="kicker">how it works · the pipeline</p>
-        <h2 class="pipe__lead">Argus turns that wall of diff into a guided review. Here's the pipeline, pass by pass — the passes v1 runs today, and the two the upcoming release adds.</h2>
+        <h2 class="pipe__lead">Argus turns that wall of diff into a guided review, all on VS Code's native surfaces. Here's how it works, step by step.</h2>
       </div>
 
       <ol class="stages">
@@ -475,15 +475,15 @@ a{color:inherit}
         <!-- 00 -->
         <li class="stage">
           <div class="stage__rule" aria-hidden="true"><span class="stage__num">00</span></div>
-          <p class="stage__kicker">point it at a branch</p>
-          <h3 class="stage__title">One binary, your machine, your subscription.</h3>
-          <p class="stage__lede">Run <b>argus</b> in any git repo and confirm the base and head. It reads the diff locally through git — no GitHub dependency, no upload, and none of GitHub's 20k-line API cap — shelling out to your already-authenticated Claude CLI for the thinking.</p>
+          <p class="stage__kicker">point it at a PR</p>
+          <h3 class="stage__title">One command, your machine, your subscription.</h3>
+          <p class="stage__lede">Run <b>ARGUS: Review PR…</b> from the command palette and paste a PR URL or <span class="mono">owner/repo#number</span>. It fetches through your own <b>gh</b> CLI and drives your already-authenticated <b>Claude</b> CLI for the review — no server, no upload, no per-seat SaaS. Or run <b>Open Demo Review</b> to try it with zero setup.</p>
           <figure class="stage__fig stage__fig--std">
-            <div class="term" role="img" aria-label="Argus confirming the base and head branch before reading the diff locally through git.">
+            <div class="term" role="img" aria-label="The VS Code command palette running ARGUS: Review PR with a pasted PR URL, fetched through the gh CLI with nothing uploaded.">
               <div class="term__scroll">
-<pre class="term__pre"><span class="c-em">&gt;</span> argus
-  base <span class="c-ink">‹ main ›</span>        head <span class="c-ink">‹ fix/redact-secret-keys ›</span>
-  <span class="c-mut">reads the diff locally · no server · no per-seat SaaS</span>
+<pre class="term__pre"><span class="c-em">⌘⇧P</span> ARGUS: Review PR…
+  <span class="c-ink">https://github.com/acme/api/pull/482</span>
+  <span class="c-mut">fetched via your gh CLI · nothing uploaded</span>
   <span class="c-dim">enter to review</span> <span class="c-em">↵</span></pre>
               </div>
             </div>
@@ -493,18 +493,18 @@ a{color:inherit}
         <!-- 01 -->
         <li class="stage">
           <div class="stage__rule" aria-hidden="true"><span class="stage__num">01</span></div>
-          <p class="stage__kicker">infer the intent</p>
+          <p class="stage__kicker">state the intent</p>
           <h3 class="stage__title">Reviews against intent, not guesses.</h3>
-          <p class="stage__lede">Argus infers what the change is actually <b>for</b> — from the diff itself and the repo files it reads for context — and grounds every explanation in that intent, so a deliberate choice reads as intentional instead of being mistaken for a slip. It reads past the diff for what the diff alone can't show: where moved code went, and what later code leans on it.</p>
+          <p class="stage__lede">Argus works out what the change is actually <b>for</b> and states it explicitly on the Overview tab — then grounds every note in that intent, so a deliberate choice reads as intentional instead of being mistaken for a slip. Each note is anchored to the first changed line of its hunk, never landing on the wrong one.</p>
           <figure class="stage__fig stage__fig--std">
-            <div class="term" role="img" aria-label="Argus's inferred intent for the change, what it read to infer it, and how it grounds every explanation in that intent.">
-              <div class="term__bar"><span class="c-em">intent</span> <span class="c-dim">·</span> <span class="c-mut">inferred</span></div>
+            <div class="term" role="img" aria-label="Argus's stated intent for the change, shown on the Overview tab, which every note is grounded in.">
+              <div class="term__bar"><span class="c-em">intent</span> <span class="c-dim">·</span> <span class="c-mut">overview tab</span></div>
               <div class="term__scroll">
 <pre class="term__pre wrapok"><span class="c-pale">“harden secret redaction before any prompt leaves the
  process — mask hyphen-delimited keys like x-api-key, and
  stop a `==` comparison losing its operator.”</span>
-<span class="c-dim">from</span>  the diff · repo files it reads for context
-<span class="c-dim">so</span>    every explanation is grounded in this intent, not a guess</pre>
+<span class="c-dim">shown</span> explicitly on the Overview tab
+<span class="c-dim">so</span>    every note is grounded in this intent, not a guess</pre>
               </div>
             </div>
           </figure>
@@ -513,67 +513,68 @@ a{color:inherit}
         <!-- 02 -->
         <li class="stage">
           <div class="stage__rule" aria-hidden="true"><span class="stage__num">02</span></div>
-          <p class="stage__kicker">a reading order, not an alphabet</p>
-          <h3 class="stage__title">Read it in the order it was built.</h3>
-          <p class="stage__lede">Before you read a line, Argus writes a whole-change brief and reorders the file tree into a dependency-sensible path — entry points and core logic first, generated files and lockfiles last.</p>
+          <p class="stage__kicker">files first, review streams in</p>
+          <h3 class="stage__title">Start reading before the AI does.</h3>
+          <p class="stage__lede">The Changed Files tree and every diff open <b>immediately</b> — you never wait on the model to start reading. The skeptic notes stream in behind a status indicator and attach to each hunk as they land, so nothing blocks.</p>
           <figure class="stage__fig stage__fig--std">
-            <div class="term" role="img" aria-label="The file list reordered from alphabetical into a dependency-sensible reading order: entry point and core logic first, the lockfile marked to skip, last.">
+            <div class="term" role="img" aria-label="Progressive loading: on open the files tree and diffs are ready while notes are still streaming, and moments later each file has its why-it-changed and look-out-for notes attached and the Overview tab is ready.">
               <div class="reorder">
                 <div class="reorder__col">
-                  <p class="reorder__h">alphabetical</p>
-<pre class="reorder__pre"><span class="c-dim">CHANGELOG.md
-go.sum
-agent/claude.go
-agent/redact.go
-core/orchestrator.go
-ui/review.go
-…</span></pre>
+                  <p class="reorder__h on">on open</p>
+<pre class="reorder__pre"><span class="c-ink">files tree</span>   <span class="c-mut">ready</span>
+<span class="c-ink">diffs</span>        <span class="c-mut">open</span>
+<span class="c-ink">notes</span>        <span class="c-wait">⠋ streaming…</span>
+<span class="c-dim">overview</span>     <span class="c-wait">⠋</span></pre>
                 </div>
                 <div class="reorder__col">
-                  <p class="reorder__h on">argus reading order</p>
-<pre class="reorder__pre"><span class="c-ink">core/orchestrator.go</span> <span class="c-em">entry</span>
-<span class="c-ink">agent/redact.go</span>      <span class="c-mut">core</span>
-<span class="c-ink">agent/claude.go</span>      <span class="c-mut">agent</span>
-<span class="c-ink">ui/review.go</span>         <span class="c-mut">surface</span>
+                  <p class="reorder__h on">moments later</p>
+<pre class="reorder__pre"><span class="c-ink">redact.go</span>    <span class="c-em">▌ why · look out</span>
+<span class="c-ink">claude.go</span>    <span class="c-em">▌ why · look out</span>
+<span class="c-ink">parse.go</span>     <span class="c-em">▌ why · look out</span>
 <span class="c-dim">…</span>
-<span class="c-dim">go.sum        skip · lockfile</span></pre>
+<span class="c-ink">overview</span>     <span class="c-mut">ready</span></pre>
                 </div>
               </div>
             </div>
           </figure>
         </li>
 
-        <!-- 03 · upcoming -->
-        <li class="stage stage--next">
+        <!-- 03 -->
+        <li class="stage">
           <div class="stage__rule" aria-hidden="true"><span class="stage__num">03</span></div>
-          <p class="stage__kicker"><span class="stage__next">Upcoming release</span> review every file, then refute it</p>
-          <h3 class="stage__title">Findings that survive a pass built to disprove them.</h3>
-          <p class="stage__lede">The upcoming release runs correctness, security, and test lenses over every file, then an adversarial self-check pass that tries to <b>refute</b> each finding and drops the ones that don't survive — so what stays flagged is worth your attention, and the rest is safe to skim.</p>
+          <p class="stage__kicker">the reviewer-skeptic lens</p>
+          <h3 class="stage__title">Every hunk: why it changed, and what to watch.</h3>
+          <p class="stage__lede">For each hunk Argus asks the two questions a careful reviewer would — <b>why this change</b>, in plain language, and <b>look out for</b>: what could go wrong, what to double-check, what the author may have missed. They render as native comment threads on the diff, tagged by importance.</p>
           <figure class="stage__fig stage__fig--std">
-            <div class="term" role="img" aria-label="Upcoming: a preview of the self-check pass — one finding is kept because it survived, and one is dropped because the self-check refuted it.">
-              <div class="term__bar"><span class="c-wait">lenses</span> <span class="c-mut">correctness · security · tests</span> <span class="c-dim">· preview</span></div>
+            <div class="term" role="img" aria-label="A per-hunk comment thread: a why-this-change note explaining the diff in plain language, and a look-out-for note flagging the one thing worth confirming.">
+              <div class="term__bar"><span class="c-em">thread</span> <span class="c-mut">redact.go · hunk 1</span> <span class="c-dim">· importance: review</span></div>
               <div class="term__scroll">
-<pre class="term__pre wrapok"><span class="ok c-mut"><span class="c-ink">kept</span>    redact.go:61 — widened key class could over-mask a value that merely contains “key”</span>
-<span class="no c-mut"><span class="c-dim">dropped</span> claude.go:88 — “unchecked error”; self-check: it's wrapped above. refuted.</span>
-<span class="c-dim">what stays flagged will survive a pass built to disprove it.</span></pre>
+<pre class="term__pre wrapok"><span class="c-em">▌ why this change</span>
+<span class="c-mut">  refuses a leading “=”, so “if x == y” no longer
+  masks its second “=” mid-comparison.</span>
+<span class="c-em">▌ look out for</span>
+<span class="c-mut">  widened key class could over-mask a value that
+  merely contains “key”.</span> <span class="c-warn">← confirm</span></pre>
               </div>
             </div>
           </figure>
         </li>
 
-        <!-- 04 · upcoming -->
-        <li class="stage stage--next">
+        <!-- 04 -->
+        <li class="stage">
           <div class="stage__rule" aria-hidden="true"><span class="stage__num">04</span></div>
-          <p class="stage__kicker"><span class="stage__next">Upcoming release</span> run your actual tests</p>
-          <h3 class="stage__title">The repo's own tests, turned into findings.</h3>
-          <p class="stage__lede">The upcoming release auto-detects and runs the repo's own test, lint, and build commands, turns real failures into findings, and flags a change that ships <b>no</b> tests as a risk of its own.</p>
+          <p class="stage__kicker">the overview tab</p>
+          <h3 class="stage__title">The whole PR, before the first hunk.</h3>
+          <p class="stage__lede">One tab frames the change: a plain-language <b>summary</b>, the explicit <b>intent</b>, the <b>critical things</b> to verify before approving, and an <b>understand-the-flow</b> walkthrough end to end. A streaming chat panel sits alongside for anything you don't follow, scoped to the file you have open.</p>
           <figure class="stage__fig stage__fig--std">
-            <div class="term" role="img" aria-label="Upcoming: a preview of Argus running the repo's own build and tests — the build passes, a test fails and becomes a finding, and a file with no test coverage is flagged as its own risk.">
-              <div class="term__bar"><span class="c-wait">tests</span> <span class="c-mut">detected · go test ./… · golangci-lint · go build</span> <span class="c-dim">· preview</span></div>
+            <div class="term" role="img" aria-label="The Overview tab for a PR: a summary line, the intent, the critical things to verify, and an understand-the-flow narrative walking the change end to end.">
+              <div class="term__bar"><span class="c-em">overview</span> <span class="c-mut">acme/api#482</span></div>
               <div class="term__scroll">
-<pre class="term__pre wrapok"><span class="ok c-mut">go build                     ok</span>
-<span class="no c-mut">go test ./internal/agent     <span class="c-crit">FAIL</span>  redact_test.go:141 → finding</span>
-<span class="c-warn">!</span> <span class="c-mut">no test touches parse.go — shipping untested · flagged as its own risk</span></pre>
+<pre class="term__pre wrapok"><span class="c-dim">summary</span>   harden secret redaction before prompts leave the process
+<span class="c-dim">intent</span>    mask hyphen-keys · stop “==” losing its operator
+<span class="c-dim">critical</span>  <span class="c-warn">·</span> confirm the widened key class won't over-mask
+          <span class="c-warn">·</span> redaction runs before any prompt is sent
+<span class="c-dim">flow</span>      1 orchestrator → 2 redact → 3 claude adapter</pre>
               </div>
             </div>
           </figure>
@@ -582,51 +583,49 @@ ui/review.go
         <!-- 05 -->
         <li class="stage">
           <div class="stage__rule" aria-hidden="true"><span class="stage__num">05</span></div>
-          <p class="stage__kicker">the review surface</p>
-          <h3 class="stage__title">Explanations inline, Claude a keystroke away.</h3>
-          <p class="stage__lede">Why-it-changed explanations render directly above each hunk (marked <span class="mono c-em">▌</span> so they're never mistaken for a <span class="mono">+/−</span> line), the file tree keeps the dependency-sensible reading order with generated files and lockfiles pushed last, and a streaming Claude chat is one keystroke away for any line you don't follow — in the terminal today, in a local web UI next.</p>
+          <p class="stage__kicker">your call, straight to GitHub</p>
+          <h3 class="stage__title">Comments inline, your review to the PR.</h3>
+          <p class="stage__lede">Skeptic notes render as comment threads on the diff (marked <span class="mono c-em">▌</span> so they're never mistaken for a <span class="mono">+/−</span> line), the Changed Files tree tracks a reviewed toggle per file that persists across reloads, and you can add your own comments on diff lines — then submit them as one GitHub review: <b>comment</b>, <b>approve</b>, or <b>request changes</b>, without leaving VS Code.</p>
           <figure class="stage__fig stage__fig--wide">
-            <div class="term" role="img" aria-label="The Argus review surface: a reordered file tree on the left with reviewed files checked, the diff in the centre showing the real redact.go change with an inline AI explanation above the hunk, and a notes pane on the right showing the whole-change brief, this file's role, and a prompt to press c to ask Claude. The status bar shows the wired keybindings.">
-              <div class="term__bar"><span class="c-em">argus</span> <b>redact.go</b> <span class="c-dim">·</span> <span class="pbar">▓▓▓▓▓▓░░░░ <i>12/23 reviewed</i></span> <span class="c-dim">·</span> <span class="c-mut">j/k move · space ✓ reviewed · c ask claude · v split · q quit</span></div>
+            <div class="term" role="img" aria-label="The Argus review surface inside VS Code: the Changed Files tree on the left with reviewed files checked, the native diff in the centre showing the real redact.go change with an inline AI comment thread above the hunk, and a review pane on the right offering comment, approve, or request changes plus a chat prompt.">
+              <div class="term__bar"><span class="c-em">argus</span> <b>redact.go</b> <span class="c-dim">·</span> <span class="pbar">▓▓▓▓▓▓░░░░ <i>12/23 reviewed</i></span> <span class="c-dim">·</span> <span class="c-mut">native diff · comment threads · submit to GitHub</span></div>
               <div class="surface">
                 <div class="surface__pane">
-                  <p class="surface__label">files · reordered</p>
+                  <p class="surface__label">changed files</p>
 <pre class="surface__pre"><span class="tree-done">orchestrator.go</span>
 <span class="tree-done">claude.go</span>
 <span class="tree-open">▸ redact.go</span>
   redact_test.go
   parse.go
-<span class="c-dim">  …
-  go.sum  lockfile</span></pre>
+<span class="c-dim">  …</span></pre>
                 </div>
                 <div class="surface__pane">
-                  <p class="surface__label">diff · why it changed</p>
-<pre class="surface__pre wrap"><span class="expl">▌ the value pattern now refuses a leading
+                  <p class="surface__label">diff · ai comment thread</p>
+<pre class="surface__pre wrap"><span class="expl">▌ why · the value pattern refuses a leading
 ▌ “=”, so a “==” comparison's second “=”
-▌ isn't swallowed — “if password == x”
-▌ stopped becoming “if password =[REDACTED] x”.</span>
+▌ isn't swallowed. look out for: the widened
+▌ key class could over-mask a value with “key”.</span>
 <span class="c-dim">@@ internal/agent/redact.go · assignmentRule</span>
 <span class="c-mut">  …secret|api[-_]?key|access[-_]?key…</span>
 <span class="del">- )("[^"]+"|'[^']+'|[^"'\s,}]+)</span>
 <span class="add">+ )("[^"]+"|'[^']+'|[^"'\s,}=][^"'\s,}]*)</span></pre>
                 </div>
                 <div class="surface__pane">
-                  <p class="surface__label">notes</p>
-<pre class="surface__pre wrap"><span class="c-dim">brief</span>
-<span class="c-mut">harden secret redaction before any
-prompt leaves the process.</span>
+                  <p class="surface__label">your review</p>
+<pre class="surface__pre wrap"><span class="c-mut">add a comment on this line…</span>
 
-<span class="c-dim">this file · redact.go</span>
-<span class="c-mut">the agent path's last mask
-before Claude sees the diff.</span></pre>
-                  <p class="chatline"><span class="k">c</span>ask Claude about any line<span class="caret" aria-hidden="true">▮</span></p>
+<span class="c-dim">submit as one review</span>
+<span class="ok c-mut">comment</span>
+<span class="ok c-mut">approve</span>
+<span class="no c-mut">request changes</span></pre>
+                  <p class="chatline"><span class="k">chat</span>ask Argus about the open file<span class="caret" aria-hidden="true">▮</span></p>
                 </div>
               </div>
             </div>
           </figure>
           <div class="payoff">
             <span class="payoff__tag">needs you</span>
-            <p>The explanation puts the one thing worth confirming right in front of you: check that the widened key class won't mask a legitimate value that just happens to contain <b>“key”</b>. Everything else in the file is safe to skim.</p>
+            <p>The <b>look out for</b> note puts the one thing worth confirming right in front of you: check that the widened key class won't mask a legitimate value that just happens to contain <b>“key”</b>. Everything else in the file is safe to skim.</p>
           </div>
         </li>
 
@@ -642,12 +641,12 @@ before Claude sees the diff.</span></pre>
     <div class="wrap">
       <p class="kicker">the trade-off</p>
       <h2 class="local__h2">It runs on your machine. Not in <em>someone else's cloud.</em></h2>
-      <p class="local__p">Argus is a single Go binary that shells out to git and your authenticated Claude CLI — the opposite trade from cloud review bots like <b>CodeRabbit</b> and <b>Greptile</b>, which read your PR on someone else's servers. It infers intent, explains why each change was made, and hands a human a guided reading order instead of a wall of diff.</p>
+      <p class="local__p">Argus is a single VS Code extension that drives your own <b>gh</b> and <b>Claude</b> CLIs — the opposite trade from cloud review bots like <b>CodeRabbit</b> and <b>Greptile</b>, which read your PR on someone else's servers. It states the intent, flags what to look out for on every hunk, and lets you submit your review to GitHub without your code ever touching an Argus cloud.</p>
       <ul class="facts">
-        <li class="fact"><p class="fact__k">no upload</p><p class="fact__v"><b>Your code never leaves the laptop.</b> No server, no third-party service.</p></li>
-        <li class="fact"><p class="fact__k">your subscription</p><p class="fact__v">Drives the <b>Claude CLI</b> you already pay for. No per-seat SaaS.</p></li>
-        <li class="fact"><p class="fact__k">no api cap</p><p class="fact__v">Reads the diff locally through git — so GitHub's <b>20k-line</b> API diff cap never applies.</p></li>
-        <li class="fact"><p class="fact__k">stop &amp; resume</p><p class="fact__v">Quit any time; your progress and cached explanations persist, so you <span class="wait">pick up</span> where you left off.</p></li>
+        <li class="fact"><p class="fact__k">no upload</p><p class="fact__v"><b>Your code never leaves the machine.</b> No Argus cloud, no third-party service.</p></li>
+        <li class="fact"><p class="fact__k">your subscription</p><p class="fact__v">Drives the <b>Claude</b> CLI you already have. No per-seat SaaS.</p></li>
+        <li class="fact"><p class="fact__k">degrades gracefully</p><p class="fact__v">Diff, files, and GitHub submission work even <b>without Claude</b> — the AI notes just wait, and regenerate later.</p></li>
+        <li class="fact"><p class="fact__k">stop &amp; resume</p><p class="fact__v">Reviewed-state and draft comments persist across window reloads, so you <span class="wait">pick up</span> where you left off.</p></li>
       </ul>
     </div>
   </section>
@@ -658,24 +657,27 @@ before Claude sees the diff.</span></pre>
       <div class="install__grid">
         <div>
           <p class="kicker">install</p>
-          <h2 class="install__h2">One command. Then run it in any repo.</h2>
-          <p class="install__p">The diff viewer works on its own; the AI passes need the Claude CLI installed and authenticated. A Homebrew tap and prebuilt binaries are on the way.</p>
+          <h2 class="install__h2">Install from the Marketplace. Then open a PR.</h2>
+          <p class="install__p">The diff and files work on their own; the AI review needs the <b>Claude</b> CLI logged in. Install once and it lives in VS Code's activity bar.</p>
+          <p class="install__p"><span class="stage__next">In progress</span> VS Code is the first face of the same engine — a terminal TUI, a web app, and a desktop app are on the way.</p>
         </div>
         <div>
+          <p class="install__p"><a class="btn btn--gem" href="https://marketplace.visualstudio.com/items?itemName=ankitvashisht12.argus-review">Install for VS Code</a></p>
+          <p class="install__then">Or grab the packaged build from the <a href="https://github.com/ankitvashisht12/argus/releases">GitHub release</a> and install the <span class="mono">.vsix</span>:</p>
           <div class="code">
             <div class="code__row">
               <span class="p" aria-hidden="true">$</span>
-              <span class="code__cmd">go install github.com/ankitvashisht/argus@latest</span>
-              <button class="copy" type="button" data-copy="go install github.com/ankitvashisht/argus@latest" aria-label="Copy install command"><span class="copy__label">copy</span></button>
+              <span class="code__cmd">code --install-extension argus-review-0.1.2.vsix</span>
+              <button class="copy" type="button" data-copy="code --install-extension argus-review-0.1.2.vsix" aria-label="Copy install command"><span class="copy__label">copy</span></button>
             </div>
           </div>
           <ol class="reqs">
-            <li><span class="reqs__n">01</span><span class="reqs__t"><b>Go 1.22+</b> — builds and installs the single static binary.</span></li>
-            <li><span class="reqs__n">02</span><span class="reqs__t"><b>git</b> on your <span class="mono">PATH</span> — Argus shells out to it to read the diff locally.</span></li>
-            <li><span class="reqs__n">03</span><span class="reqs__t"><b>Claude CLI</b>, installed and authenticated — the AI passes run on the subscription you already have.</span></li>
-            <li><span class="reqs__n">04</span><span class="reqs__t"><b>v1 is the terminal tool</b> that explains a diff — the upcoming release turns that surface into the finish line of a full local review pipeline, with a local web UI.</span></li>
+            <li><span class="reqs__n">01</span><span class="reqs__t"><b>VS Code 1.90+</b> — Argus lives on its native diff, tree, and comment surfaces.</span></li>
+            <li><span class="reqs__n">02</span><span class="reqs__t"><b>gh CLI</b>, installed and authenticated (<span class="mono">gh auth login</span>) — used to fetch PRs and submit your review.</span></li>
+            <li><span class="reqs__n">03</span><span class="reqs__t"><b>Claude CLI</b>, logged in <span class="c-dim">(optional)</span> — powers the AI review; without it the diff and files still open.</span></li>
+            <li><span class="reqs__n">04</span><span class="reqs__t"><b>Zero-setup demo</b> — run <span class="mono">ARGUS: Open Demo Review (fixture)</span> to try it offline, no gh or Claude needed.</span></li>
           </ol>
-          <p class="install__then"><span class="mono c-em">&gt;</span> then run <span class="mono c-ink">argus</span> inside any git repository.</p>
+          <p class="install__then"><span class="mono c-em">&gt;</span> then run <span class="mono c-ink">ARGUS: Review PR…</span> and paste a PR URL.</p>
         </div>
       </div>
     </div>
@@ -690,7 +692,7 @@ before Claude sees the diff.</span></pre>
       <span class="eye" aria-hidden="true"></span>
       <span class="foot__word">argus</span>
     </div>
-    <p class="colophon">The local-first AI code reviewer that <b>explains</b> why a change was made and <b>guides</b> your review of it. A single Go binary; drives your own <b>Claude CLI</b>; your code never leaves the machine. v1 is the terminal tool that explains a diff — the upcoming release turns that explain surface into the finish line of a full local review pipeline with a local web UI. Source, issues, and install at <a href="https://github.com/ankitvashisht/argus">github.com/ankitvashisht/argus</a>. Set in <b>Instrument Serif</b>, <b>Schibsted Grotesk</b>, and <b>JetBrains Mono</b>. Requires Go 1.22+, git, and an authenticated Claude CLI.</p>
+    <p class="colophon">The local-first AI PR reviewer for VS Code that <b>reviews</b> a GitHub PR through a skeptic's lens and <b>guides</b> your review of it — a why-it-changed and look-out-for note on every hunk, plus an Overview tab for the PR's intent and critical things to know. A single VS Code extension; drives your own <b>gh</b> and <b>Claude</b> CLIs; your code never leaves the machine. VS Code is the first shipped face of the engine, with a terminal TUI, web, and desktop app in progress. Get it on the <a href="https://marketplace.visualstudio.com/items?itemName=ankitvashisht12.argus-review">VS Code Marketplace</a>; source and issues at <a href="https://github.com/ankitvashisht12/argus">github.com/ankitvashisht12/argus</a>. Built by <a href="https://ankitvashisht.in">Ankit Vashisht</a>. Set in <b>Instrument Serif</b>, <b>Schibsted Grotesk</b>, and <b>JetBrains Mono</b>. Requires VS Code 1.90+, an authenticated gh CLI, and a logged-in Claude CLI for the AI review.</p>
     <p class="foot__legend">
       <span>The only two colours on this page —</span>
       <span class="swatch"><i class="s-add" aria-hidden="true"></i> the green of an addition</span>

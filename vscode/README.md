@@ -1,8 +1,16 @@
 # ARGUS — AI PR Review for VS Code
 
-ARGUS fetches a GitHub pull request, generates an AI review with a
-**reviewer-skeptic lens**, and presents it inside VS Code using native surfaces —
-no separate web UI or TUI.
+ARGUS fetches a GitHub pull request, reviews it through a **reviewer-skeptic
+lens**, and presents it inside VS Code on native surfaces — the changed-files
+tree, the built-in diff viewer, and comment threads. No separate web UI or TUI,
+and nothing leaves your machine: it drives your own `claude` and `gh` CLIs
+locally.
+
+## Install
+
+Install from the
+[VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=ankitvashisht12.argus-review),
+or search for *ARGUS — AI PR Review* in the Extensions view.
 
 ## Features
 
@@ -33,7 +41,14 @@ no separate web UI or TUI.
 3. Open **ARGUS: Open Overview** for the summary / intent / critical / flow.
 4. Add your own comments on diff lines, then **ARGUS: Submit Review to GitHub**.
 
-Try it without a live PR via **ARGUS: Open Demo Review (fixture)**.
+Try it without a live PR via **ARGUS: Open Demo Review (fixture)** — a bundled
+fixture that opens offline with zero setup.
+
+## Roadmap
+
+Local branch diffs, GitHub comment-thread sync, and additional faces of the same
+engine — a terminal TUI, web app, and desktop app — are in progress. See the
+[project README](https://github.com/ankitvashisht12/argus) for details.
 
 ## Commands
 
@@ -45,7 +60,12 @@ Try it without a live PR via **ARGUS: Open Demo Review (fixture)**.
 | `ARGUS: Submit Review to GitHub` | Submit draft comments as a GitHub review. |
 | `ARGUS: Open Demo Review (fixture)` | Load the bundled demo fixture offline. |
 
+## Credits
+
+Created by [Ankit Vashisht](https://ankitvashisht.in). Vendored mechanics are
+adapted from [codiff](https://github.com/nkzw-tech/codiff) (MIT) and attributed
+in `THIRD-PARTY-NOTICES.md`.
+
 ## License
 
-MIT. See `LICENSE`. Vendored mechanics are attributed in
-`THIRD-PARTY-NOTICES.md`.
+MIT. See `LICENSE`.
