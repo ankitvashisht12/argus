@@ -3,7 +3,7 @@
   "displayName": "ARGUS — AI PR Review",
   "description": "AI-first GitHub PR review inside VS Code: skeptic-lens summaries, per-hunk notes, and review submission.",
   "version": "0.1.2",
-  "publisher": "ankitvashisht",
+  "publisher": "ankitvashisht12",
   "private": false,
   "license": "MIT",
   "engines": {
@@ -16,7 +16,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/ankitvashisht/argus.git"
+    "url": "https://github.com/ankitvashisht12/argus.git"
   },
   "main": "./dist/extension.js",
   "activationEvents": [],
