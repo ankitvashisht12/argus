@@ -2,7 +2,7 @@
   "name": "argus-review",
   "displayName": "ARGUS — AI PR Review",
   "description": "AI-first GitHub PR review inside VS Code: skeptic-lens summaries, per-hunk notes, and review submission.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "ankitvashisht",
   "private": false,
   "license": "MIT",
@@ -99,6 +99,9 @@
       "comments/commentThread/context": [
         { "command": "argus.createComment", "when": "commentController == argus", "group": "inline" }
       ],
+      "comments/commentThread/title": [
+        { "command": "argus.submitReview", "when": "commentController == argus", "group": "navigation@1" }
+      ],
       "comments/comment/title": [
         { "command": "argus.editComment", "when": "commentController == argus && comment == draft", "group": "group@1" },
         { "command": "argus.deleteComment", "when": "commentController == argus && comment == draft", "group": "group@2" }
@@ -115,6 +118,13 @@
           "title": "ARGUS",
           "icon": "$(eye)"
         }
+      ],
+      "panel": [
+        {
+          "id": "argus-chat",
+          "title": "ARGUS Chat",
+          "icon": "$(comment-discussion)"
+        }
       ]
     },
     "views": {
@@ -124,8 +134,15 @@
           "name": "Changed Files"
         },
         {
+          "id": "argus.details",
+          "name": "File Details",
+          "type": "webview"
+        }
+      ],
+      "argus-chat": [
+        {
           "id": "argus.sidebar",
-          "name": "ARGUS Chat",
+          "name": "Chat",
           "type": "webview"
         }
       ]

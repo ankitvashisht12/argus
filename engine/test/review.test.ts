@@ -3,6 +3,8 @@ import type { FileChange, Hunk, ReviewResult } from '../src/types.js';
 import {
   buildDigest,
   buildReviewPrompt,
+  buildReviewSchema,
+  firstChangedLine,
   normalizeReview,
   reviewSchema,
   DEFAULT_DIGEST_BUDGET,
@@ -84,6 +86,28 @@ const deletionFile: FileChange = {
       newStart: 4,
       newLines: 0,
       patch: '@@ -5,4 +4,0 @@\n-a\n-b\n-c\n-d',
+    }),
+  ],
+};
+
+/**
+ * A modified file whose single hunk has SEVERAL leading context lines before the
+ * first real change — the exact shape that made notes anchor above the change.
+ */
+const contextHeavyFile: FileChange = {
+  path: 'src/deep.ts',
+  status: 'modified',
+  additions: 2,
+  deletions: 1,
+  hunks: [
+    hunk({
+      id: `src/deep.ts:${SHA}:h1`,
+      oldStart: 100,
+      oldLines: 6,
+      newStart: 100,
+      newLines: 7,
+      patch:
+        '@@ -100,6 +100,7 @@\n ctx1\n ctx2\n ctx3\n-removed\n+added1\n+added2\n ctx4\n ctx5',
     }),
   ],
 };
@@ -211,6 +235,18 @@ describe('buildReviewPrompt', () => {
     expect(prompt).toContain('Never use line numbers');
   });
 
+  it('demands a note for EVERY hunk alias (full coverage), enumerating them', () => {
+    const digest = buildDigest(threeFileFixture);
+    const prompt = buildReviewPrompt(meta, digest);
+    // Contract: one entry per hunk, not just the "interesting" ones.
+    expect(prompt).toContain('one entry for EVERY hunk alias');
+    // The exact count and alias list are spelled out so the model can self-check.
+    expect(prompt).toContain('There are 4 hunk(s): h1, h2, h3, h4');
+    // Trivial hunks must still be covered (as "context"), not omitted.
+    expect(prompt).toContain('"importance": "context"');
+    expect(prompt).toContain('A missing alias is a contract violation.');
+  });
+
   it('surfaces truncation in the prompt when the digest was clamped', () => {
     const digest = buildDigest(threeFileFixture, { perHunk: 10, total: 1_000 });
     const prompt = buildReviewPrompt(meta, digest);
@@ -251,6 +287,71 @@ describe('reviewSchema', () => {
       'context',
     ]);
   });
+
+  it('static reviewSchema imposes no per-hunk lower bound', () => {
+    expect((reviewSchema as any).properties.hunks.minItems).toBeUndefined();
+  });
+});
+
+describe('buildReviewSchema', () => {
+  it('pins hunks.minItems to the hunk count so coverage is enforced', () => {
+    const schema = buildReviewSchema(8) as any;
+    expect(schema.properties.hunks.minItems).toBe(8);
+    // Everything else matches the static schema shape.
+    expect(schema.required).toEqual(reviewSchema.required);
+    expect(schema.properties.hunks.items).toEqual(
+      (reviewSchema as any).properties.hunks.items,
+    );
+  });
+
+  it('omits minItems for a zero / missing hunk count', () => {
+    expect((buildReviewSchema(0) as any).properties.hunks.minItems).toBeUndefined();
+    expect((buildReviewSchema() as any).properties.hunks.minItems).toBeUndefined();
+  });
+
+  it('never mutates the shared static reviewSchema', () => {
+    buildReviewSchema(5);
+    expect((reviewSchema as any).properties.hunks.minItems).toBeUndefined();
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* firstChangedLine                                                            */
+/* -------------------------------------------------------------------------- */
+
+describe('firstChangedLine', () => {
+  it('skips leading context lines to the first ADDED line on the new side', () => {
+    // 3 context lines from newStart 100 -> first "+added1" is new line 103.
+    expect(firstChangedLine(contextHeavyFile.hunks[0], 'new')).toBe(103);
+  });
+
+  it('skips leading context lines to the first REMOVED line on the old side', () => {
+    // Same hunk on the old side: ctx1..ctx3 then "-removed" at old line 103.
+    expect(firstChangedLine(contextHeavyFile.hunks[0], 'old')).toBe(103);
+  });
+
+  it('returns the added line for a pure-addition hunk (no context)', () => {
+    // "@@ -0,0 +1,3 @@\n+one..." — first added line is new line 1.
+    expect(firstChangedLine(addedFile.hunks[0], 'new')).toBe(1);
+  });
+
+  it('returns the first removed line for a pure-deletion hunk', () => {
+    // "@@ -5,4 +4,0 @@\n-a..." — first removed line is old line 5.
+    expect(firstChangedLine(deletionFile.hunks[0], 'old')).toBe(5);
+  });
+
+  it('falls back to the side start line for a pure-context hunk', () => {
+    const ctxOnly = hunk({
+      id: `x:${SHA}:h1`,
+      oldStart: 20,
+      oldLines: 2,
+      newStart: 30,
+      newLines: 2,
+      patch: '@@ -20,2 +30,2 @@\n ctx1\n ctx2',
+    });
+    expect(firstChangedLine(ctxOnly, 'new')).toBe(30);
+    expect(firstChangedLine(ctxOnly, 'old')).toBe(20);
+  });
 });
 
 /* -------------------------------------------------------------------------- */
@@ -281,9 +382,11 @@ describe('normalizeReview', () => {
     expect(a.hunkId).toBe(`src/app.ts:${SHA}:h1`);
     expect(a.path).toBe('src/app.ts');
     expect(a.side).toBe('new');
-    // newStart 10, newLines 5 -> 10..14
-    expect(a.startLine).toBe(10);
-    expect(a.endLine).toBe(14);
+    // Patch: "@@ -10,3 +10,5 @@\n context\n-old\n+new1\n+new2\n+new3\n context".
+    // newStart 10 is a leading CONTEXT line; the first ADDED line (+new1) is new
+    // line 11. The thread anchors to that single line, not the whole 10..14 span.
+    expect(a.startLine).toBe(11);
+    expect(a.endLine).toBe(11);
     expect(a.importance).toBe('critical');
   });
 
@@ -296,9 +399,10 @@ describe('normalizeReview', () => {
     const a = out.anchored[0];
     expect(a.hunkId).toBe(`src/gone.ts:${SHA}:h1`);
     expect(a.side).toBe('old');
-    // oldStart 5, oldLines 4 -> 5..8
+    // Pure deletion "@@ -5,4 +4,0 @@\n-a\n-b\n-c\n-d": first removed line is old
+    // line 5, and the anchor is that single line (not the 5..8 span).
     expect(a.startLine).toBe(5);
-    expect(a.endLine).toBe(8);
+    expect(a.endLine).toBe(5);
   });
 
   it('drops unknown aliases', () => {
@@ -357,9 +461,10 @@ describe('normalizeReview', () => {
     expect(out.anchored).toHaveLength(1);
     expect(out.anchored[0].hunkId).toBe(`src/app.ts:${SHA}:h2`);
     expect(out.anchored[0].side).toBe('new');
-    // newStart 42, newLines 2 -> 42..43
+    // Patch "@@ -40,2 +42,2 @@\n-x\n+y\n context": first added line (+y) is new
+    // line 42; anchored to that single line.
     expect(out.anchored[0].startLine).toBe(42);
-    expect(out.anchored[0].endLine).toBe(43);
+    expect(out.anchored[0].endLine).toBe(42);
   });
 
   it('preserves the raw review verbatim on the result', () => {
@@ -369,5 +474,57 @@ describe('normalizeReview', () => {
     ]);
     const out = normalizeReview(raw, threeFileFixture, digest.aliasToHunkId);
     expect(out.review).toBe(raw);
+  });
+
+  it('resolves aliases despite surrounding whitespace and wrong case', () => {
+    const digest = buildDigest(threeFileFixture);
+    const raw = review([
+      { hunkId: ' H1 ', why: 'w', lookout: 'l', importance: 'normal' }, // upper + spaces
+      { hunkId: 'H4', why: 'w', lookout: 'l', importance: 'normal' }, // upper
+    ]);
+    const out = normalizeReview(raw, threeFileFixture, digest.aliasToHunkId);
+    expect(out.anchored.map((a) => a.hunkId)).toEqual([
+      `src/app.ts:${SHA}:h1`,
+      `src/gone.ts:${SHA}:h1`,
+    ]);
+    // Those two are now covered; the remaining two are uncovered.
+    expect(out.uncoveredHunkIds).toEqual([
+      `src/app.ts:${SHA}:h2`,
+      `src/new.ts:${SHA}:h1`,
+    ]);
+  });
+
+  it('anchors every hunk of a realistic multi-hunk PR to its first changed line', () => {
+    const files = [contextHeavyFile, modifiedFile, deletionFile];
+    const digest = buildDigest(files);
+    // Full coverage: one note per alias (h1 deep, h2/h3 app, h4 gone).
+    const raw = review(
+      digest.hunks.map((h) => ({
+        hunkId: h.alias,
+        why: 'w',
+        lookout: 'l',
+        importance: 'context' as const,
+      })),
+    );
+    const out = normalizeReview(raw, files, digest.aliasToHunkId);
+    expect(out.uncoveredHunkIds).toEqual([]);
+    const byId = new Map(out.anchored.map((a) => [a.hunkId, a]));
+
+    // Context-heavy hunk: anchored at new line 103 (past 3 context lines), single line.
+    const deep = byId.get(`src/deep.ts:${SHA}:h1`)!;
+    expect([deep.side, deep.startLine, deep.endLine]).toEqual(['new', 103, 103]);
+
+    // app h1: first "+new1" is new line 11 (one context line before it).
+    const app1 = byId.get(`src/app.ts:${SHA}:h1`)!;
+    expect([app1.side, app1.startLine, app1.endLine]).toEqual(['new', 11, 11]);
+
+    // Pure deletion: first "-" is old line 5, single line, old side.
+    const gone = byId.get(`src/gone.ts:${SHA}:h1`)!;
+    expect([gone.side, gone.startLine, gone.endLine]).toEqual(['old', 5, 5]);
+
+    // No note spans more than one line (would render at the hunk END in VS Code).
+    for (const a of out.anchored) {
+      expect(a.startLine).toBe(a.endLine);
+    }
   });
 });

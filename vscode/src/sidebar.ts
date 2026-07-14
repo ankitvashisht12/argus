@@ -1,6 +1,11 @@
 /**
- * Secondary-sidebar webview view (`argus.sidebar`): streaming chat about the PR
- * plus a details panel for the active file.
+ * Chat webview view (`argus.sidebar`): streaming chat about the PR.
+ *
+ * Lives in its own `argus-chat` view container (a panel container that the user
+ * can relocate to the secondary side bar) so the activity-bar container is free
+ * to show "Changed Files" + "File Details" as sibling accordions. The per-file
+ * details panel that used to sit at the top of this webview now lives in its own
+ * view (`argus.details`, see `details.ts`).
  *
  * The extension host owns all session state; the webview is a dumb renderer that
  * receives fully-computed payloads and posts back user intents (send / stop /
@@ -51,67 +56,6 @@ export function parseArgusUri(
   return { side: uri.authority, path };
 }
 
-/** Payload the webview renders in its top details panel. */
-export type SidebarDetails =
-  | { readonly kind: 'empty' }
-  | {
-      readonly kind: 'pr';
-      readonly title: string;
-      readonly subtitle: string;
-      readonly summary: string;
-    }
-  | {
-      readonly kind: 'file';
-      readonly path: string;
-      readonly role: string;
-      readonly note: string;
-      readonly hunkCount: number;
-      readonly reviewed: boolean;
-    };
-
-/**
- * Compute the details payload from the current session and focused file. Reads
- * session getters only (no mutation); returns a plain, serializable object safe
- * to `postMessage` into the webview.
- */
-export function buildDetails(
-  session: PrSession | null,
-  focusPath: string | undefined,
-): SidebarDetails {
-  if (!session) return { kind: 'empty' };
-
-  if (focusPath) {
-    const file = session.files.find((f) => f.path === focusPath);
-    const review = session.fileReview(focusPath);
-    const fallbackNote = review
-      ? ''
-      : session.reviewError
-        ? 'AI review unavailable for this PR.'
-        : 'No AI note for this file.';
-    return {
-      kind: 'file',
-      path: focusPath,
-      role: review?.role ?? '',
-      note: review?.note ?? fallbackNote,
-      hunkCount: file?.hunks.length ?? 0,
-      reviewed: session.isReviewed(focusPath),
-    };
-  }
-
-  const meta = session.meta;
-  const summary =
-    session.overview?.summary ??
-    (session.reviewError
-      ? 'AI review unavailable — open a changed file to see its diff.'
-      : 'Generating review…');
-  return {
-    kind: 'pr',
-    title: meta.title,
-    subtitle: `#${meta.number} · ${meta.owner}/${meta.repo} · @${meta.author}`,
-    summary,
-  };
-}
-
 /** A cryptographically-unpredictable nonce for the strict-CSP `<script>`. */
 function getNonce(): string {
   const chars =
@@ -129,8 +73,7 @@ function getNonce(): string {
 
 /** Messages the host posts INTO the webview. */
 type ToWebview =
-  | { readonly type: 'state'; readonly details: SidebarDetails; readonly history: readonly ChatMessage[] }
-  | { readonly type: 'details'; readonly details: SidebarDetails }
+  | { readonly type: 'state'; readonly history: readonly ChatMessage[] }
   | { readonly type: 'streamStart' }
   | { readonly type: 'delta'; readonly delta: ChatDelta }
   | { readonly type: 'streamEnd' };
@@ -152,7 +95,6 @@ let activeProvider: SidebarProvider | undefined;
 class SidebarProvider implements vscode.WebviewViewProvider {
   #view: vscode.WebviewView | undefined;
   #wiredSession: PrSession | null = null;
-  #reviewSub: vscode.Disposable | undefined;
   #focusPath: string | undefined;
   #abort: AbortController | undefined;
   #streaming = false;
@@ -191,42 +133,30 @@ class SidebarProvider implements vscode.WebviewViewProvider {
     this.sync();
   }
 
-  /** Update the focused file from the active editor and refresh the details panel. */
+  /** Track the file focused in the active editor (scopes the chat context). */
   updateActiveEditor(editor: vscode.TextEditor | undefined): void {
-    // When the editor is undefined (e.g. focus moved to this webview) keep the
-    // last file focus so details don't flicker back to the PR summary.
+    // When the editor is undefined (e.g. focus moved to a webview) keep the last
+    // file focus so the chat context doesn't flip back to the whole PR.
     if (!editor) return;
     this.#focusPath = parseArgusUri(editor.document.uri)?.path;
-    this.#pushDetails();
   }
 
   /**
-   * Re-resolve the session; if it changed instance, re-wire its review
-   * subscription and push a fresh full state to the webview.
+   * Re-resolve the session; if it changed instance, re-track it and push a fresh
+   * chat transcript to the webview.
    */
   sync(): void {
     const session = this.getSession();
     if (session !== this.#wiredSession) {
-      this.#reviewSub?.dispose();
-      this.#reviewSub = undefined;
       this.#wiredSession = session;
-      if (session) {
-        const disposables = [
-          session.onDidChangeReview(() => this.#pushDetails()),
-          session.onDidChangeReviewedState(() => this.#pushDetails()),
-        ];
-        this.#reviewSub = vscode.Disposable.from(...disposables);
-      }
     }
     this.#post({
       type: 'state',
-      details: buildDetails(session, this.#focusPath),
       history: session?.chatHistory ?? [],
     });
   }
 
   dispose(): void {
-    this.#reviewSub?.dispose();
     this.#abort?.abort();
     if (activeProvider === this) activeProvider = undefined;
   }
@@ -279,13 +209,6 @@ class SidebarProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  #pushDetails(): void {
-    this.#post({
-      type: 'details',
-      details: buildDetails(this.getSession(), this.#focusPath),
-    });
-  }
-
   #post(message: ToWebview): void {
     void this.#view?.webview.postMessage(message);
   }
@@ -317,7 +240,6 @@ class SidebarProvider implements vscode.WebviewViewProvider {
   <title>ARGUS Chat</title>
 </head>
 <body>
-  <section id="details" class="details" aria-live="polite"></section>
   <div id="log" class="log" role="log" aria-live="polite"></div>
   <form id="composer" class="composer">
     <textarea id="input" rows="1" placeholder="Ask about this PR…"

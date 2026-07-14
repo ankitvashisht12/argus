@@ -119,6 +119,21 @@ export function aiThreadUri(
   return argusUriForSide(meta, file, sideToAuthority(anchor.side));
 }
 
+/**
+ * The single-line diff-editor range an AI thread attaches to.
+ *
+ * The engine anchors each note to the hunk's FIRST added/changed line
+ * (`startLine === endLine`, 1-based). We build a zero-width, single-line range
+ * from `startLine` (converted to 0-based). Anchoring to a single line is
+ * deliberate: a CommentThread whose range spans multiple lines has VS Code
+ * render its gutter marker / expansion at the range's END line, so a whole-hunk
+ * range would push the note to the BOTTOM of the hunk instead of onto the change.
+ */
+export function aiThreadRange(anchor: AnchoredHunkReview): vscode.Range {
+  const line = Math.max(0, anchor.startLine - 1); // 1-based (engine) -> 0-based
+  return new vscode.Range(line, 0, line, 0);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Comment model                                                              */
 /* -------------------------------------------------------------------------- */
@@ -167,6 +182,19 @@ const draftRegistry = new Map<vscode.CommentThread, { path: string; side: DraftS
 /** Display name for user comments; resolved from git, falls back to "You". */
 let gitUserName = 'You';
 
+/**
+ * Fires whenever the set/contents of user draft comments changes (create, edit-
+ * save, delete, or bulk clear/discard). Surfaces outside this module — notably
+ * the "Submit Review" status-bar item — use it to keep a live draft count without
+ * polling. Additive and independent of AI thread anchoring.
+ */
+const draftsChangedEmitter = new vscode.EventEmitter<void>();
+export const onDidChangeDrafts = draftsChangedEmitter.event;
+
+function fireDraftsChanged(): void {
+  draftsChangedEmitter.fire();
+}
+
 /* -------------------------------------------------------------------------- */
 /* AI thread lifecycle                                                        */
 /* -------------------------------------------------------------------------- */
@@ -181,9 +209,7 @@ function createAiThread(session: PrSession, anchor: AnchoredHunkReview): void {
   const uri = aiThreadUri(session.meta, session.files, anchor);
   if (!uri) return;
 
-  const start = Math.max(0, anchor.startLine - 1);
-  const end = Math.max(start, anchor.endLine - 1);
-  const range = new vscode.Range(start, 0, end, 0);
+  const range = aiThreadRange(anchor);
 
   const why: vscode.Comment = {
     body: whyBody(anchor),
@@ -285,6 +311,7 @@ function createDraft(reply: vscode.CommentReply): void {
   thread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
   thread.label = 'Your review comment';
   if (!draftRegistry.has(thread)) draftRegistry.set(thread, meta);
+  fireDraftsChanged();
 }
 
 function editDraft(comment: DraftCommentImpl): void {
@@ -300,6 +327,7 @@ function saveDraft(comment: DraftCommentImpl): void {
     c.savedBody = c.body;
     c.mode = vscode.CommentMode.Preview;
   });
+  fireDraftsChanged();
 }
 
 function cancelEditDraft(comment: DraftCommentImpl): void {
@@ -319,6 +347,7 @@ function deleteDraft(comment: DraftCommentImpl): void {
     draftRegistry.delete(thread);
     thread.dispose();
   }
+  fireDraftsChanged();
 }
 
 /* -------------------------------------------------------------------------- */
@@ -344,6 +373,7 @@ export function getDraftComments(): DraftComment[] {
 export function clearDrafts(): void {
   for (const thread of draftRegistry.keys()) thread.dispose();
   draftRegistry.clear();
+  fireDraftsChanged();
 }
 
 /* -------------------------------------------------------------------------- */
@@ -357,7 +387,9 @@ export function clearDrafts(): void {
  * - Create a {@link vscode.CommentController} scoped to the `argus` diff docs.
  * - For each entry from {@link PrSession.anchorsForFile}, create a COLLAPSED
  *   comment thread on the anchored `argus://head` (or `argus://base` for pure
- *   deletions) document at `[startLine, endLine]`, containing two AI comments:
+ *   deletions) document at the single first-changed line (`startLine`), so the
+ *   note renders on the change rather than at the hunk end, containing two AI
+ *   comments:
  *   "why this change" and "look out for", labelled with the hunk `importance`
  *   (critical/normal/context). AI comments are read-only (distinct author).
  * - Let the user add their own reply/thread on any diff line, and edit/delete
@@ -379,10 +411,12 @@ export function registerComments(
 
   controller = vscode.comments.createCommentController('argus', 'ARGUS');
   controller.options = {
-    prompt: 'Add a review comment',
-    placeHolder: 'Write a comment for the PR review…',
+    prompt: 'Add a review comment on this line',
+    placeHolder: 'Draft a review comment — submit them all with “Submit Review to GitHub”',
   };
-  // (B) Allow a draft thread on any line of an argus:// diff document.
+  // (B) Allow a draft thread on ANY line of an argus:// diff document. The `+`
+  // commenting affordance (gutter) is enabled for the full line range so the
+  // reviewer can start a draft anywhere in the diff, not just on changed hunks.
   controller.commentingRangeProvider = {
     provideCommentingRanges(document: vscode.TextDocument) {
       if (document.uri.scheme !== 'argus') return [];

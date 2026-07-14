@@ -25,10 +25,20 @@ import type { SessionAccessor } from './prSession';
 
 import { registerContentProvider } from './contentProvider';
 import { registerTree, TREE_REFRESH_COMMAND } from './tree';
-import { registerComments, refreshCommentsSession, getDraftComments, clearDrafts } from './comments';
+import {
+  registerComments,
+  refreshCommentsSession,
+  getDraftComments,
+  clearDrafts,
+  onDidChangeDrafts,
+} from './comments';
 import { registerOverviewPanel } from './overviewPanel';
 import { registerSidebar, notifySidebarSessionChanged } from './sidebar';
-import { registerGitHub, promptPrInput, connectDrafts } from './github';
+import { registerDetails, notifyDetailsSessionChanged } from './details';
+import { registerGitHub, promptPrInput, connectDrafts, refreshSubmitStatus } from './github';
+
+/** globalState key: whether the one-time "move chat to the secondary side bar" hint has been shown. */
+const CHAT_RELOCATION_HINT_KEY = 'argus.chatRelocationHintShown';
 
 const GH_INSTALL_URL = 'https://cli.github.com';
 
@@ -61,8 +71,12 @@ export function activate(context: vscode.ExtensionContext): void {
   registerTree(context, getSession); // argus.files tree + argus.toggleReviewed
   registerComments(context, getSession); // AI hunk threads + user draft threads
   registerOverviewPanel(context, getSession); // summary/intent/critical/flow webview
-  registerSidebar(context, getSession); // chat + file details webview
-  registerGitHub(context, getSession); // argus.submitReview
+  registerDetails(context, getSession); // per-file details webview (activity bar)
+  registerSidebar(context, getSession); // chat webview (argus-chat panel container)
+  registerGitHub(context, getSession); // argus.submitReview + submit status-bar item
+
+  // Keep the "Submit Review to GitHub (N)" status-bar count live as drafts change.
+  context.subscriptions.push(onDidChangeDrafts(() => refreshSubmitStatus()));
 
   // Bridge the draft comments produced by comments.ts into the submit flow.
   connectDrafts(
@@ -88,25 +102,51 @@ export function activate(context: vscode.ExtensionContext): void {
   };
 
   command('argus.reviewPr', () => reviewPr(context));
-  command('argus.demo', () => demo());
+  command('argus.demo', () => demo(context));
   command('argus.regenerate', () => regenerate());
 }
 
 /** Swap in a freshly loaded session, dispose the old one, refresh every surface. */
-function adoptSession(session: PrSession): void {
+function adoptSession(context: vscode.ExtensionContext, session: PrSession): void {
   const previous = currentSession;
   currentSession = session;
   previous?.dispose();
   refreshSurfaces();
+  maybeSuggestChatRelocation(context);
 }
 
 /** Nudge each lazily-bound surface to re-read the session accessor. */
 function refreshSurfaces(): void {
   void vscode.commands.executeCommand(TREE_REFRESH_COMMAND);
   notifySidebarSessionChanged();
+  notifyDetailsSessionChanged();
   refreshCommentsSession();
+  refreshSubmitStatus();
   // Reveal + rebind the overview so it reflects the new PR immediately.
   void vscode.commands.executeCommand('argus.openOverview');
+}
+
+/**
+ * One-time guidance toast: the chat lives in the `argus-chat` panel container so
+ * the activity-bar container can show Changed Files + File Details. Since VS Code
+ * `^1.90` has no stable API to force a view into the secondary side bar (that
+ * contribution point only shipped in Aug-2025 Insiders), we let the user relocate
+ * it and remember dismissal in globalState so the hint is shown at most once.
+ */
+function maybeSuggestChatRelocation(context: vscode.ExtensionContext): void {
+  if (context.globalState.get<boolean>(CHAT_RELOCATION_HINT_KEY)) return;
+  void context.globalState.update(CHAT_RELOCATION_HINT_KEY, true);
+  void vscode.window
+    .showInformationMessage(
+      'ARGUS Chat opens in the bottom panel. Drag its “ARGUS Chat” tab to the ' +
+        'Secondary Side Bar to keep chat beside your diff.',
+      'Open Chat',
+    )
+    .then((choice) => {
+      if (choice === 'Open Chat') {
+        void vscode.commands.executeCommand('argus.sidebar.focus');
+      }
+    });
 }
 
 /**
@@ -145,15 +185,15 @@ async function reviewPr(context: vscode.ExtensionContext): Promise<void> {
     return;
   }
 
-  adoptSession(session);
+  adoptSession(context, session);
   notifyReviewState(session);
 }
 
 /** `ARGUS: Open Demo Review (fixture)` — load the bundled fixture, no gh/claude. */
-async function demo(): Promise<void> {
+async function demo(context: vscode.ExtensionContext): Promise<void> {
   try {
     const session = await PrSession.loadDemo();
-    adoptSession(session);
+    adoptSession(context, session);
   } catch (error) {
     void vscode.window.showErrorMessage(
       `ARGUS: could not open the demo fixture. ${messageOf(error)}`,

@@ -42,9 +42,9 @@ import {
   ReviewCache,
   buildDigest,
   buildReviewPrompt,
+  buildReviewSchema,
   normalizeReview,
   parseUnifiedDiff,
-  reviewSchema,
   stableStringify,
 } from '@argus/engine';
 import type {
@@ -555,7 +555,10 @@ export class PrSession {
       const prompt = buildReviewPrompt(this.#meta, this.#digest);
       const result = await this.#agent.runStructured<ReviewResult>(
         prompt,
-        reviewSchema,
+        // Bind the schema's minimum hunk count to the digest so the model is
+        // steered to return one note per hunk (coverage), not just the few it
+        // deems interesting.
+        buildReviewSchema(this.#digest.hunks.length),
         {
           model: this.#model,
           onModelFallback: (fallback, original) =>

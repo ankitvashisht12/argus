@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   parsePrInput,
   prUrl,
+  submitStatusText,
   toReviewComment,
   toReviewComments,
   toReviewSide,
@@ -118,5 +119,16 @@ describe('prUrl', () => {
     expect(prUrl({ owner: 'acme', repo: 'widgets', number: 482 })).toBe(
       'https://github.com/acme/widgets/pull/482',
     );
+  });
+});
+
+describe('submitStatusText', () => {
+  it('omits the count when there are no drafts', () => {
+    expect(submitStatusText(0)).toBe('$(cloud-upload) Submit Review to GitHub');
+  });
+
+  it('shows the draft count in parentheses when there is at least one', () => {
+    expect(submitStatusText(1)).toBe('$(cloud-upload) Submit Review to GitHub (1)');
+    expect(submitStatusText(5)).toBe('$(cloud-upload) Submit Review to GitHub (5)');
   });
 });

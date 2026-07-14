@@ -25,69 +25,6 @@ body {
   display: none !important;
 }
 
-/* --- Details panel ------------------------------------------------------- */
-
-.details {
-  flex: 0 0 auto;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
-}
-
-.details .title {
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-
-.details .subtitle,
-.details .meta {
-  margin-top: 3px;
-  font-size: 0.9em;
-  opacity: 0.75;
-  overflow-wrap: anywhere;
-}
-
-.details .role {
-  display: inline-block;
-  margin-top: 4px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-size: 0.85em;
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
-}
-
-.details .note {
-  margin-top: 6px;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-}
-
-.details .reviewed {
-  margin-left: 6px;
-  color: var(--vscode-charts-green, var(--vscode-terminal-ansiGreen, #3fb950));
-  font-size: 0.85em;
-}
-
-.details .empty {
-  opacity: 0.85;
-}
-
-.details button.link {
-  margin-top: 8px;
-  padding: 4px 10px;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  color: var(--vscode-button-foreground);
-  background: var(--vscode-button-background);
-  font-family: inherit;
-  font-size: inherit;
-}
-
-.details button.link:hover {
-  background: var(--vscode-button-hoverBackground);
-}
-
 /* --- Chat log ------------------------------------------------------------ */
 
 .log {

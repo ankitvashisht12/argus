@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { AnchoredHunkReview, FileChange } from '@argus/engine';
 
-import { aiThreadUri } from '../src/comments';
+import { aiThreadRange, aiThreadUri } from '../src/comments';
 import { diffUrisForFile } from '../src/contentProvider';
 
 const meta = {
@@ -62,5 +62,28 @@ describe('aiThreadUri', () => {
 
   it('returns null when the anchor file is not in the session', () => {
     expect(aiThreadUri(meta, [], anchor({ path: 'missing.ts' }))).toBeNull();
+  });
+});
+
+describe('aiThreadRange', () => {
+  it('builds a single-line 0-based range from the 1-based first-changed line', () => {
+    // Engine anchors to a single line: startLine === endLine (e.g. line 103).
+    const range = aiThreadRange(anchor({ startLine: 103, endLine: 103 }));
+    expect([range.startLine, range.startChar, range.endLine, range.endChar]).toEqual([
+      102, 0, 102, 0,
+    ]);
+  });
+
+  it('never spans multiple lines even if endLine drifts past startLine', () => {
+    // Defensive: a multi-line range would render the thread at the hunk END in
+    // VS Code. We anchor to startLine only, so start === end regardless.
+    const range = aiThreadRange(anchor({ startLine: 11, endLine: 14 }));
+    expect(range.startLine).toBe(range.endLine);
+    expect(range.startLine).toBe(10); // 11 -> 0-based 10
+  });
+
+  it('clamps a first line (startLine 1) to row 0 without going negative', () => {
+    const range = aiThreadRange(anchor({ startLine: 1, endLine: 1 }));
+    expect([range.startLine, range.endLine]).toEqual([0, 0]);
   });
 });

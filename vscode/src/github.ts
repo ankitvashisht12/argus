@@ -64,6 +64,34 @@ export type ClearDrafts = () => void | Promise<void>;
 let draftsProvider: DraftCommentsProvider = () => [];
 let clearDraftsFn: ClearDrafts = () => undefined;
 
+/* -------------------------------------------------------------------------- */
+/* Submit-review status-bar item (discoverable one-click submit)               */
+/* -------------------------------------------------------------------------- */
+
+let submitStatusBar: vscode.StatusBarItem | undefined;
+let statusGetSession: SessionAccessor = () => null;
+
+/**
+ * Refresh the "Submit Review to GitHub (N)" status-bar item: visible only while
+ * a PR session is active, with N = current draft-comment count. Called on session
+ * change and whenever drafts change (wired in `extension.ts`), plus right after a
+ * successful submit clears the drafts.
+ */
+export function refreshSubmitStatus(): void {
+  if (!submitStatusBar) return;
+  if (!statusGetSession()) {
+    submitStatusBar.hide();
+    return;
+  }
+  const count = draftsProvider().length;
+  submitStatusBar.text = submitStatusText(count);
+  submitStatusBar.tooltip =
+    count > 0
+      ? `Submit ${count} draft review comment${count === 1 ? '' : 's'} to GitHub`
+      : 'Submit a review to GitHub (add inline comments from the diff first)';
+  submitStatusBar.show();
+}
+
 /**
  * Bridge the `comments.ts` surface into the submit flow. The integrator calls
  * this once at activation (after registering comments) with that surface's
@@ -123,6 +151,17 @@ export function toReviewComments(
   drafts: readonly DraftComment[],
 ): ReviewComment[] {
   return drafts.map(toReviewComment);
+}
+
+/**
+ * Label for the "Submit Review to GitHub" status-bar item. Shows the draft count
+ * in parentheses when there is at least one, so the reviewer always sees how many
+ * inline comments a submit would include.
+ */
+export function submitStatusText(draftCount: number): string {
+  return draftCount > 0
+    ? `$(cloud-upload) Submit Review to GitHub (${draftCount})`
+    : `$(cloud-upload) Submit Review to GitHub`;
 }
 
 /** The canonical web URL for a PR. */
@@ -370,6 +409,7 @@ export async function submitReviewFlow(
 
   // 5. Success.
   await clearDraftsFn();
+  refreshSubmitStatus();
   const url = prUrl({ owner, repo, number });
   const open = await vscode.window.showInformationMessage(
     `ARGUS: ${eventLabel(choice.event).toLowerCase()} review submitted to ${owner}/${repo}#${number}.`,
@@ -442,7 +482,16 @@ export function registerGitHub(
   context: vscode.ExtensionContext,
   getSession: SessionAccessor,
 ): void {
+  statusGetSession = getSession;
+  submitStatusBar = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Right,
+    100,
+  );
+  submitStatusBar.command = 'argus.submitReview';
+  refreshSubmitStatus();
+
   context.subscriptions.push(
+    submitStatusBar,
     vscode.commands.registerCommand('argus.submitReview', () =>
       submitReviewFlow(context, getSession),
     ),

@@ -180,6 +180,9 @@ export function buildReviewPrompt(meta: PullRequestMeta, digest: Digest): string
     })
     .join('\n\n');
 
+  const aliasList = digest.hunks.map((h) => h.alias).join(', ');
+  const hunkCount = digest.hunks.length;
+
   return `You are ARGUS, a rigorous and skeptical pull-request reviewer. Your job is
 not to praise the change but to understand it precisely and to surface what a
 careful reviewer must verify before trusting it. Assume nothing works until the
@@ -219,13 +222,19 @@ schema. Requirements:
   understand it, from entry point to effect. Each step is one short sentence.
 - "files": for each meaningfully changed file, its role in the change and a
   short note on what it contributes.
-- "hunks": one entry per hunk worth commenting on. For each:
+- "hunks": you MUST return exactly one entry for EVERY hunk alias listed above.
+  There are ${hunkCount} hunk(s): ${aliasList}. Every one of these aliases MUST
+  appear in "hunks" exactly once — do not skip any, and do not merge several
+  hunks into one entry. Trivial, mechanical, or supporting hunks still get their
+  own entry: set "importance": "context" and give a brief "why"/"lookout" rather
+  than omitting them. A missing alias is a contract violation. For each entry:
   - "hunkId": the hunk's alias exactly as given above (e.g. "h3"). Reference
     hunks ONLY by these aliases. Never use line numbers or file paths as ids.
   - "why": why this specific change exists / what it does, grounded in the PR
     intent.
   - "lookout": the skeptic note — what could break, what edge case or invariant
-    this touches, what a reviewer should double-check.
+    this touches, what a reviewer should double-check. For a trivial hunk it is
+    fine to say the change is mechanical and low-risk.
   - "importance": "critical" (must-review risk), "normal" (worth a look), or
     "context" (mechanical / supporting).
 
@@ -233,73 +242,142 @@ Output JSON only. No markdown, no commentary outside the JSON object.`;
 }
 
 /**
- * JSON Schema for the structured review output. Mirrors {@link ReviewResult}
- * (version/summary/intent/critical/flow/files/hunks). Original to ARGUS.
- * `hunks[].hunkId` MUST be a request-local alias (h1, h2, …), never a line
- * number or path — the normalizer resolves it back to a stable hunk id.
+ * Build the JSON Schema for the structured review output. Mirrors
+ * {@link ReviewResult} (version/summary/intent/critical/flow/files/hunks).
+ * Original to ARGUS. `hunks[].hunkId` MUST be a request-local alias (h1, h2, …),
+ * never a line number or path — the normalizer resolves it back to a stable id.
+ *
+ * When `hunkCount` is a positive integer the `hunks` array is given
+ * `minItems: hunkCount`. Under constrained/structured decoding this steers the
+ * model to emit at least one entry per hunk alias, which — together with the
+ * prompt's full-coverage contract — is what stops most hunks from silently going
+ * uncommented. Callers with the digest in hand (which knows N) should prefer
+ * this over the static {@link reviewSchema}.
+ *
+ * @param hunkCount Number of hunk aliases the model was shown (digest length).
+ *   Omit / pass 0 for no lower bound.
  */
-export const reviewSchema: JsonSchema = {
-  $schema: 'http://json-schema.org/draft-07/schema#',
-  type: 'object',
-  additionalProperties: false,
-  required: [
-    'version',
-    'summary',
-    'intent',
-    'critical',
-    'flow',
-    'files',
-    'hunks',
-  ],
-  properties: {
-    version: { const: 1 },
-    summary: { type: 'string' },
-    intent: { type: 'string' },
-    critical: { type: 'array', items: { type: 'string' } },
-    flow: { type: 'array', items: { type: 'string' } },
-    files: {
-      type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['path', 'role', 'note'],
-        properties: {
-          path: { type: 'string' },
-          role: { type: 'string' },
-          note: { type: 'string' },
+export function buildReviewSchema(hunkCount = 0): JsonSchema {
+  const hunks: JsonSchema = {
+    type: 'array',
+    items: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['hunkId', 'why', 'lookout', 'importance'],
+      properties: {
+        hunkId: {
+          type: 'string',
+          description:
+            'Request-local hunk alias exactly as given in the prompt (e.g. "h3"). Never a line number or path.',
         },
+        why: { type: 'string' },
+        lookout: { type: 'string' },
+        importance: { enum: ['critical', 'normal', 'context'] },
       },
     },
-    hunks: {
-      type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['hunkId', 'why', 'lookout', 'importance'],
-        properties: {
-          hunkId: {
-            type: 'string',
-            description:
-              'Request-local hunk alias exactly as given in the prompt (e.g. "h3"). Never a line number or path.',
-          },
-          why: { type: 'string' },
-          lookout: { type: 'string' },
-          importance: { enum: ['critical', 'normal', 'context'] },
-        },
-      },
-    },
-  },
-} as const satisfies JsonSchema;
+  };
+  if (Number.isInteger(hunkCount) && hunkCount > 0) {
+    hunks.minItems = hunkCount;
+  }
 
-/** Compute the diff-line anchor for a resolved hunk. */
+  return {
+    $schema: 'http://json-schema.org/draft-07/schema#',
+    type: 'object',
+    additionalProperties: false,
+    required: ['version', 'summary', 'intent', 'critical', 'flow', 'files', 'hunks'],
+    properties: {
+      version: { const: 1 },
+      summary: { type: 'string' },
+      intent: { type: 'string' },
+      critical: { type: 'array', items: { type: 'string' } },
+      flow: { type: 'array', items: { type: 'string' } },
+      files: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['path', 'role', 'note'],
+          properties: {
+            path: { type: 'string' },
+            role: { type: 'string' },
+            note: { type: 'string' },
+          },
+        },
+      },
+      hunks,
+    },
+  };
+}
+
+/**
+ * Static review schema with no per-hunk lower bound. Retained for callers that
+ * do not have the hunk count on hand; prefer {@link buildReviewSchema} with the
+ * digest length so coverage is enforced at the schema level.
+ */
+export const reviewSchema: JsonSchema = buildReviewSchema();
+
+/**
+ * Line number (1-based, on `side`) of the FIRST added/changed line in a hunk.
+ *
+ * The `@@` header's `newStart`/`oldStart` point at the hunk's first line, which
+ * is usually a leading *context* line — anchoring a note there puts it above the
+ * actual change (and, for a multi-line range, VS Code renders the thread at the
+ * range's END line). This walks the hunk patch body, tracking the running
+ * old/new line numbers, and returns the line of the first `+` (new side) or `-`
+ * (old side) line — the first line the reviewer actually needs to look at.
+ *
+ * Falls back to the hunk's start line when the body has no changed line on the
+ * requested side (a pure-context hunk, which the parser should never emit).
+ *
+ * Pure — exported for unit testing and reuse.
+ *
+ * @param hunk The resolved hunk (its `patch` includes the `@@` header).
+ * @param side Which side's line number to report (`new` for adds/edits, `old`
+ *   for pure deletions).
+ * @returns 1-based line number of the first changed line on `side`.
+ */
+export function firstChangedLine(hunk: Hunk, side: DiffSide): number {
+  const want = side === 'new' ? '+' : '-';
+  const fallback = side === 'new' ? hunk.newStart : hunk.oldStart;
+  const lines = hunk.patch.split('\n');
+  let oldLine = hunk.oldStart;
+  let newLine = hunk.newStart;
+
+  for (const line of lines) {
+    if (line.length === 0) continue;
+    const marker = line[0];
+    if (line.startsWith('@@')) continue; // the @@ hunk header itself
+    if (marker === '\\') continue; // "\ No newline at end of file"
+
+    if (marker === '+') {
+      if (want === '+') return newLine;
+      newLine += 1;
+    } else if (marker === '-') {
+      if (want === '-') return oldLine;
+      oldLine += 1;
+    } else {
+      // context line (' ') — advances both sides, changes nothing.
+      oldLine += 1;
+      newLine += 1;
+    }
+  }
+
+  return fallback;
+}
+
+/**
+ * Compute the diff-line anchor for a resolved hunk. Anchors to the SINGLE line
+ * of the first added/changed line (see {@link firstChangedLine}) so the thread
+ * renders exactly on the change rather than spanning the hunk (a multi-line
+ * range renders its thread at the END line in VS Code).
+ */
 function anchorFor(hunk: Hunk): { side: DiffSide; startLine: number; endLine: number } {
   // A pure-deletion hunk contributes no new-side lines, so it can only be
   // anchored on the old (base) side. Everything else anchors on the new side.
   const isPureDeletion = hunk.newLines === 0;
   const side: DiffSide = isPureDeletion ? 'old' : 'new';
-  const startLine = isPureDeletion ? hunk.oldStart : hunk.newStart;
-  const lineCount = Math.max(1, isPureDeletion ? hunk.oldLines : hunk.newLines);
-  return { side, startLine, endLine: startLine + lineCount - 1 };
+  const line = firstChangedLine(hunk, side);
+  return { side, startLine: line, endLine: line };
 }
 
 /**
@@ -330,18 +408,29 @@ export function normalizeReview(
     }
   }
 
+  // Build a case-insensitive alias index so a model that returns "H1" / " h1 "
+  // instead of the exact "h1" still resolves rather than being silently dropped.
+  const aliasIndex = new Map<string, string>();
+  if (aliasToHunkId) {
+    for (const [alias, id] of Object.entries(aliasToHunkId)) {
+      aliasIndex.set(alias.trim().toLowerCase(), id);
+    }
+  }
+
   const anchored: AnchoredHunkReview[] = [];
   const covered = new Set<string>();
 
   for (const note of raw.hunks ?? []) {
-    const rawId = note.hunkId;
-    if (typeof rawId !== 'string' || rawId.length === 0) {
+    const rawId = typeof note.hunkId === 'string' ? note.hunkId.trim() : '';
+    if (rawId.length === 0) {
       continue;
     }
-    // Resolve alias → stable id when a map is provided; otherwise the id may
-    // already be stable. Fall back to treating the raw id as stable so callers
-    // that skip the alias layer still work.
-    const stableId = aliasToHunkId?.[rawId] ?? rawId;
+    // Resolve alias → stable id when a map is provided (tolerant of surrounding
+    // whitespace and case); otherwise the id may already be stable. Fall back to
+    // treating the raw id as stable so callers that skip the alias layer work.
+    const stableId = aliasToHunkId
+      ? (aliasIndex.get(rawId.toLowerCase()) ?? rawId)
+      : rawId;
     const entry = hunkById.get(stableId);
     if (!entry) {
       // Unknown / unresolvable id — drop it.

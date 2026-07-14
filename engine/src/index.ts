@@ -48,6 +48,8 @@ export {
   buildDigest,
   buildReviewPrompt,
   reviewSchema,
+  buildReviewSchema,
+  firstChangedLine,
   normalizeReview,
   DEFAULT_DIGEST_BUDGET,
   LARGE_DIGEST_BUDGET,
