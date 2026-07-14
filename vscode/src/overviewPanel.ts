@@ -81,6 +81,12 @@ export interface OverviewModel {
   readonly flow: readonly string[];
   /** File rows (`ready` only). */
   readonly files: readonly OverviewFileVM[];
+  /**
+   * Count of real diff hunks the review never covered (`ready` only). Normally
+   * `0` — the schema's `minItems` forces full coverage — so a non-zero value is
+   * the honesty backstop surfaced as "N hunks not covered — Regenerate to retry".
+   */
+  readonly uncoveredCount: number;
   /** Actionable error text (`error` only), else `null`. */
   readonly error: string | null;
 }
@@ -112,6 +118,7 @@ export function buildOverviewModel(session: PrSession | null): OverviewModel {
     critical: [],
     flow: [],
     files: [],
+    uncoveredCount: 0,
     error: null,
   };
 
@@ -158,6 +165,7 @@ export function buildOverviewModel(session: PrSession | null): OverviewModel {
     critical: overview.critical,
     flow: overview.flow,
     files,
+    uncoveredCount: session.review?.uncoveredHunkIds.length ?? 0,
   };
 }
 

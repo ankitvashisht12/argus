@@ -114,10 +114,27 @@
     return section;
   }
 
+  /** @param {number} count */
+  function renderUncovered(count) {
+    const section = el('section', 'section uncovered');
+    const line = el('div', 'uncovered-line');
+    const n = count === 1 ? '1 hunk' : count + ' hunks';
+    line.appendChild(el('span', 'uncovered-text', n + ' not covered by this review.'));
+    const btn = /** @type {HTMLButtonElement} */ (el('button', 'btn btn-small', 'Regenerate to retry'));
+    btn.type = 'button';
+    btn.addEventListener('click', function () {
+      vscode.postMessage({ type: 'regenerate' });
+    });
+    line.appendChild(btn);
+    section.appendChild(line);
+    return section;
+  }
+
   /** @param {any} model */
   function renderReady(model) {
     const frag = document.createDocumentFragment();
     frag.appendChild(renderHeader(model));
+    if (model.uncoveredCount > 0) frag.appendChild(renderUncovered(model.uncoveredCount));
     frag.appendChild(paragraphSection('Summary', model.summary, ''));
     frag.appendChild(paragraphSection('Intent', model.intent, 'intent'));
     if (model.critical && model.critical.length) frag.appendChild(renderCritical(model.critical));

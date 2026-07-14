@@ -328,3 +328,25 @@ body {
   outline: 1px solid var(--vscode-focusBorder);
   outline-offset: 2px;
 }
+.btn-small {
+  padding: 2px 10px;
+  font-size: 0.9em;
+}
+
+/* Uncovered-hunks honesty backstop (rare — schema minItems forces coverage). */
+.section.uncovered {
+  margin-top: 0;
+}
+.uncovered-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-radius: 3px;
+  border-left: 3px solid var(--argus-warn-fg);
+  background: var(--vscode-inputValidation-warningBackground, var(--vscode-textBlockQuote-background));
+}
+.uncovered-text {
+  color: var(--argus-warn-fg);
+}

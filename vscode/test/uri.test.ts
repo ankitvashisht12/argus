@@ -7,6 +7,7 @@ import {
   errorBanner,
   parseArgusUri,
   placeholderBanner,
+  sessionMatchesUri,
 } from '../src/contentProvider';
 import { parseArgusUri as parseSidebarUri } from '../src/sidebar';
 
@@ -132,6 +133,34 @@ describe('sidebar parseArgusUri matches the content-provider encoding', () => {
     expect(
       parseSidebarUri({ scheme: 'argus', authority: 'head', path: '/a/b/c' }),
     ).toBeNull();
+  });
+});
+
+describe('sessionMatchesUri (self-healing restored tabs)', () => {
+  const parts = parseArgusUri(
+    buildArgusUri({
+      side: 'head',
+      owner: 'acme',
+      repo: 'widgets',
+      number: 482,
+      path: 'src/x.ts',
+      sha: 'head222',
+    }),
+  );
+
+  it('matches a session whose PR identity equals the URI', () => {
+    const session = { meta: { owner: 'acme', repo: 'widgets', number: 482 } };
+    expect(sessionMatchesUri(session, parts)).toBe(true);
+  });
+
+  it('does not match a different PR number (tab #482 while #9 loaded)', () => {
+    const session = { meta: { owner: 'acme', repo: 'widgets', number: 9 } };
+    expect(sessionMatchesUri(session, parts)).toBe(false);
+  });
+
+  it('does not match a different owner/repo', () => {
+    const session = { meta: { owner: 'other', repo: 'widgets', number: 482 } };
+    expect(sessionMatchesUri(session, parts)).toBe(false);
   });
 });
 

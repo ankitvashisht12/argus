@@ -24,7 +24,7 @@ import * as vscode from 'vscode';
 
 import type { AnchoredHunkReview, DiffSide, FileChange, HunkImportance } from '@argus/engine';
 import type { PrSession, SessionAccessor } from './prSession';
-import { argusUriForSide, parseArgusUri } from './contentProvider';
+import { argusUriForSide, buildArgusUri, parseArgusUri } from './contentProvider';
 
 const execFileAsync = promisify(execFile);
 
@@ -255,20 +255,48 @@ function rebuildAiThreads(): void {
 function syncSession(): void {
   const session = accessor ? accessor() : null;
   if (session === boundSession) return;
+  const previous = boundSession;
+
+  // Decide draft disposition BEFORE rebinding, so the durable-store writes made
+  // by discardDraftsOnSessionSwap target the PREVIOUS session's `drafts` key.
+  //
+  // A swap to a DIFFERENT PR (or to no PR) invalidates every live draft: their
+  // {path, line} anchors point at the previous PR's diff, so submitting them
+  // against the new PR would mis-anchor or be rejected. Discard them (and tell
+  // the user). A swap to the SAME PR (e.g. a window reload re-adopts a fresh
+  // session object for the same owner/repo/number) must NOT discard — the drafts
+  // are restored below from the new session's persisted copy.
+  if (previous && (!session || !sameProject(previous, session))) {
+    discardDraftsOnSessionSwap();
+  }
+
   boundSession = session;
   reviewSub?.dispose();
   reviewSub = session ? session.onDidChangeReview(() => rebuildAiThreads()) : undefined;
-  // A session swap invalidates every draft by definition: their {path, line}
-  // anchor points at the *previous* PR's diff, so submitting them against the
-  // new PR would mis-anchor or be rejected. Discard them (and tell the user).
-  discardDraftsOnSessionSwap();
+
+  // Restore persisted drafts for the newly-bound session when the live registry
+  // is empty (a fresh module load after a window reload, or right after a
+  // different-PR discard). Same-PR reload therefore resumes the reviewer's
+  // drafts on the correct argus:// URIs; a fresh PR restores nothing.
+  if (session && draftRegistry.size === 0) restoreDrafts(session);
+
   rebuildAiThreads();
 }
 
+/** Whether two sessions are the same pull request (owner/repo/number). */
+function sameProject(a: PrSession, b: PrSession): boolean {
+  return (
+    a.meta.owner === b.meta.owner &&
+    a.meta.repo === b.meta.repo &&
+    a.meta.number === b.meta.number
+  );
+}
+
 /**
- * Drop every user draft thread because the session was replaced, warning the
- * user (non-blocking) when drafts were actually discarded. Distinct from
- * {@link clearDrafts}, which is the silent post-submit cleanup.
+ * Drop every user draft thread because the session was replaced by a DIFFERENT
+ * PR, warning the user (non-blocking) when drafts were actually discarded.
+ * Distinct from {@link clearDrafts} only in the toast — both wipe the bound
+ * session's persisted drafts, so a genuine discard does not resurrect on reload.
  */
 function discardDraftsOnSessionSwap(): void {
   const discarded = getDraftComments().length;
@@ -279,6 +307,48 @@ function discardDraftsOnSessionSwap(): void {
     `ARGUS: discarded ${discarded} draft review ` +
       `comment${discarded === 1 ? '' : 's'} from the previous pull request.`,
   );
+}
+
+/**
+ * Recreate the draft threads persisted for `session` (same-PR reload). Rebuilds
+ * each `argus://` URI directly from the stored {path, side} — the exact inverse
+ * of {@link parseDiffUri} — so a restored base-side draft on a renamed file lands
+ * on the same base (oldPath) document it was authored on. No-op when there is
+ * nothing persisted.
+ */
+function restoreDrafts(session: PrSession): void {
+  if (!controller) return;
+  const persisted = session.drafts;
+  if (persisted.length === 0) return;
+
+  for (const draft of persisted) {
+    const uri = buildArgusUri({
+      side: draft.side,
+      owner: session.meta.owner,
+      repo: session.meta.repo,
+      number: session.meta.number,
+      path: draft.path,
+      sha: draft.side === 'base' ? session.meta.baseSha : session.meta.headSha,
+    });
+    const row = Math.max(0, draft.line - 1); // 1-based -> 0-based
+    const thread = controller.createCommentThread(uri, new vscode.Range(row, 0, row, 0), []);
+    const comment = new DraftCommentImpl(
+      new vscode.MarkdownString(draft.body),
+      vscode.CommentMode.Preview,
+      { name: gitUserName },
+      thread,
+    );
+    thread.comments = [comment];
+    thread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
+    thread.label = 'Your review comment';
+    draftRegistry.set(thread, { path: draft.path, side: draft.side });
+  }
+  fireDraftsChanged();
+}
+
+/** Persist the live draft registry to the bound session's durable store. */
+function persistDrafts(): void {
+  void boundSession?.saveDrafts(getDraftComments());
 }
 
 /* -------------------------------------------------------------------------- */
@@ -311,6 +381,7 @@ function createDraft(reply: vscode.CommentReply): void {
   thread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
   thread.label = 'Your review comment';
   if (!draftRegistry.has(thread)) draftRegistry.set(thread, meta);
+  persistDrafts();
   fireDraftsChanged();
 }
 
@@ -327,6 +398,7 @@ function saveDraft(comment: DraftCommentImpl): void {
     c.savedBody = c.body;
     c.mode = vscode.CommentMode.Preview;
   });
+  persistDrafts();
   fireDraftsChanged();
 }
 
@@ -347,6 +419,7 @@ function deleteDraft(comment: DraftCommentImpl): void {
     draftRegistry.delete(thread);
     thread.dispose();
   }
+  persistDrafts();
   fireDraftsChanged();
 }
 
@@ -369,10 +442,16 @@ export function getDraftComments(): DraftComment[] {
   return out;
 }
 
-/** Drop every user draft thread (call after a successful GitHub submit). */
+/**
+ * Drop every user draft thread AND clear the bound session's persisted copy
+ * (call after a successful GitHub submit, and from the different-PR session
+ * swap). Wiping the durable store here is what makes a submit/discard final —
+ * the drafts do not resurrect on the next window reload.
+ */
 export function clearDrafts(): void {
   for (const thread of draftRegistry.keys()) thread.dispose();
   draftRegistry.clear();
+  void boundSession?.saveDrafts([]);
   fireDraftsChanged();
 }
 

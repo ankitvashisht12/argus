@@ -134,6 +134,28 @@ export interface ChatOptions {
   readonly signal?: AbortSignal;
 }
 
+/**
+ * A user draft review comment, persisted across window reloads so the reviewer
+ * can stop and resume (contract: the landing page's "stop & resume" promise).
+ *
+ * Serialized by `comments.ts` from the live draft-thread registry on every
+ * add/edit/delete and restored when a session for the SAME PR is adopted. The
+ * `side` is the `argus://` document authority (`base`/`head`), matching
+ * `DraftComment.side` in `comments.ts`, so the two shapes are interchangeable.
+ */
+export interface PersistedDraft {
+  /** Side-appropriate file path the comment targets (base uses the pre-rename path). */
+  readonly path: string;
+  /** 1-based anchor line within the diff document. */
+  readonly line: number;
+  /** Diff side (`base`/`head`) — the `argus://` document authority. */
+  readonly side: 'base' | 'head';
+  /** The comment body text (Markdown). */
+  readonly body: string;
+  /** Optional stable id (unused today; reserved so restored ids can round-trip). */
+  readonly id?: number;
+}
+
 /** A single turn in the per-PR chat transcript. */
 export interface ChatMessage {
   /** Who produced the message. */
@@ -201,6 +223,7 @@ interface PrSessionDeps {
   readonly reviewError: string | null;
   readonly reviewed: Set<string>;
   readonly chatHistory: ChatMessage[];
+  readonly drafts: PersistedDraft[];
   /** `null` in demo mode (no live `gh`). */
   readonly gh: GhClient | null;
   /** `null` in demo mode / when `claude` is absent. */
@@ -213,6 +236,7 @@ interface PrSessionDeps {
 
 const REVIEWED_KEY = 'reviewed';
 const CHAT_KEY = 'chat';
+const DRAFTS_KEY = 'drafts';
 
 /* -------------------------------------------------------------------------- */
 /* PrSession                                                                  */
@@ -234,6 +258,7 @@ export class PrSession {
   readonly #reviewTimeoutSeconds: () => number | undefined;
   readonly #reviewed: Set<string>;
   readonly #chatHistory: ChatMessage[];
+  #drafts: PersistedDraft[];
 
   readonly #gh: GhClient | null;
   readonly #agent: ClaudeAgent | null;
@@ -269,6 +294,7 @@ export class PrSession {
     this.#reviewStatus = deps.review ? 'ready' : deps.reviewError ? 'error' : 'idle';
     this.#reviewed = deps.reviewed;
     this.#chatHistory = deps.chatHistory;
+    this.#drafts = deps.drafts;
     this.#gh = deps.gh;
     this.#agent = deps.agent;
     this.#cache = deps.cache;
@@ -333,6 +359,7 @@ export class PrSession {
       (await kv.get<string[]>(REVIEWED_KEY)) ?? [],
     );
     const chatHistory = (await kv.get<ChatMessage[]>(CHAT_KEY)) ?? [];
+    const drafts = (await kv.get<PersistedDraft[]>(DRAFTS_KEY)) ?? [];
 
     const session = new PrSession({
       meta,
@@ -344,6 +371,7 @@ export class PrSession {
       reviewError: null,
       reviewed,
       chatHistory,
+      drafts,
       gh,
       agent,
       cache,
@@ -383,6 +411,7 @@ export class PrSession {
       reviewError: null,
       reviewed: new Set<string>(),
       chatHistory: [],
+      drafts: [],
       gh: null,
       agent: null,
       cache: null,
@@ -463,6 +492,16 @@ export class PrSession {
     return this.#chatHistory;
   }
 
+  /**
+   * The user draft review comments persisted for this PR (restored from durable
+   * state at load). `comments.ts` reads this once when adopting a session for the
+   * same PR to recreate the draft threads, and keeps it current via
+   * {@link saveDrafts} on every add/edit/delete.
+   */
+  get drafts(): readonly PersistedDraft[] {
+    return this.#drafts;
+  }
+
   /* ---------------------------------------------------------------------- */
   /* Mutations                                                               */
   /* ---------------------------------------------------------------------- */
@@ -477,6 +516,18 @@ export class PrSession {
     else this.#reviewed.delete(path);
     this.#onDidChangeReviewedState.fire(path);
     await this.#kv?.set(REVIEWED_KEY, [...this.#reviewed]);
+  }
+
+  /**
+   * Persist the current set of user draft review comments across window reloads
+   * (contract: stop & resume). Called by `comments.ts` on every draft
+   * add/edit/delete and with `[]` after a successful GitHub submit clears them.
+   * No-op persistence in demo mode (`#kv === null`), but the in-memory snapshot
+   * is still updated so {@link drafts} stays consistent within the session.
+   */
+  async saveDrafts(drafts: readonly PersistedDraft[]): Promise<void> {
+    this.#drafts = [...drafts];
+    await this.#kv?.set(DRAFTS_KEY, this.#drafts);
   }
 
   /**

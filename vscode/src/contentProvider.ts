@@ -161,7 +161,7 @@ export function placeholderBanner(parts: ArgusUriParts): string {
 }
 
 /** Whether a loaded session is the same PR the given URI belongs to. */
-function sessionMatchesUri(
+export function sessionMatchesUri(
   session: { meta: { owner: string; repo: string; number: number } },
   parts: ArgusUriParts,
 ): boolean {
@@ -175,6 +175,23 @@ function sessionMatchesUri(
 /* -------------------------------------------------------------------------- */
 /* Registration                                                               */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * Proactively refresh every open `argus://` diff tab for the newly-adopted PR.
+ * Set by {@link registerContentProvider}; no-op until then. See that function's
+ * `refreshOpenDocuments` for why this exists (self-healing restored tabs).
+ */
+let notifySessionChanged: () => void = () => undefined;
+
+/**
+ * Notify the content provider that the current session was replaced, so any
+ * `argus://` diff tab left showing the placeholder (a tab restored on window
+ * reload, before its PR was re-loaded) re-requests and self-heals. Called by
+ * `extension.ts` right after {@link module:extension.adoptSession}.
+ */
+export function notifyContentProviderSessionChanged(): void {
+  notifySessionChanged();
+}
 
 /**
  * Register the base/head content provider and the `argus.openDiff` command.
@@ -201,6 +218,39 @@ export function registerContentProvider(
     cache.clear();
     for (const key of stale) onDidChange.fire(vscode.Uri.parse(key));
   };
+
+  /**
+   * Self-heal open `argus://` diff tabs when a new session is adopted. The lazy
+   * {@link syncSession} above only runs from inside `provideTextDocumentContent`,
+   * so a restored placeholder tab that VS Code never re-requests would stay stuck
+   * on the placeholder even once its PR is loaded. Here we eagerly drop the cache
+   * and fire `onDidChange` for every OPEN document whose URI matches the new
+   * session's PR identity, forcing VS Code to re-request the real content.
+   */
+  const refreshOpenDocuments = (): void => {
+    syncSession(); // invalidate cache + refresh previously-cached keys
+    const session = getSession();
+    if (!session) return;
+    for (const doc of vscode.workspace.textDocuments) {
+      if (doc.uri.scheme !== ARGUS_SCHEME) continue;
+      let parts: ArgusUriParts;
+      try {
+        parts = parseArgusUri(doc.uri);
+      } catch {
+        continue;
+      }
+      if (sessionMatchesUri(session, parts)) {
+        cache.delete(doc.uri.toString());
+        onDidChange.fire(doc.uri);
+      }
+    }
+  };
+  notifySessionChanged = refreshOpenDocuments;
+  context.subscriptions.push({
+    dispose: () => {
+      notifySessionChanged = () => undefined;
+    },
+  });
 
   const provider: vscode.TextDocumentContentProvider = {
     onDidChange: onDidChange.event,

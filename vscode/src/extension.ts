@@ -23,7 +23,7 @@ import { GhClient } from '@argus/engine';
 import { PrSession, ToolUnavailableError } from './prSession';
 import type { SessionAccessor } from './prSession';
 
-import { registerContentProvider } from './contentProvider';
+import { registerContentProvider, notifyContentProviderSessionChanged } from './contentProvider';
 import { registerTree, TREE_REFRESH_COMMAND } from './tree';
 import {
   registerComments,
@@ -151,6 +151,32 @@ function onReviewChanged(session: PrSession): void {
   if (session !== currentSession) return;
   refreshReviewingStatus();
   if (session.reviewStatus === 'error') notifyReviewState(session);
+  if (session.reviewStatus === 'ready') notifyUncoveredHunks(session);
+}
+
+/**
+ * When a review lands with hunks the model never covered, surface a calm,
+ * one-per-review warning toast with a Regenerate action (the Overview tab shows
+ * the same honest line). Coverage gaps are rare — the schema's `minItems` forces
+ * full coverage — so this is the honesty backstop, not an everyday nag. Fires
+ * once per settled review: onDidChangeReview emits `ready` exactly once per run,
+ * and a Regenerate produces a fresh run (hence a fresh, legitimate toast).
+ */
+function notifyUncoveredHunks(session: PrSession): void {
+  const count = session.review?.uncoveredHunkIds.length ?? 0;
+  if (count === 0) return;
+  const noun = count === 1 ? 'hunk was' : 'hunks were';
+  output.appendLine(`Coverage gap: ${count} ${noun} not covered by the review.`);
+  void vscode.window
+    .showWarningMessage(
+      `ARGUS: ${count} ${noun} not covered by this review. Regenerate to retry.`,
+      'Regenerate',
+    )
+    .then((choice) => {
+      if (choice === 'Regenerate') {
+        void vscode.commands.executeCommand('argus.regenerate');
+      }
+    });
 }
 
 /** Show the spinner while the current review is running; hide it otherwise. */
@@ -167,6 +193,9 @@ function refreshSurfaces(): void {
   notifyDetailsSessionChanged();
   refreshCommentsSession();
   refreshSubmitStatus();
+  // Self-heal any argus:// diff tab restored on window reload (still showing the
+  // placeholder) now that a matching PR session is loaded.
+  notifyContentProviderSessionChanged();
   // Reveal + rebind the overview so it reflects the new PR immediately.
   void vscode.commands.executeCommand('argus.openOverview');
 }
