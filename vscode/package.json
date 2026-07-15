@@ -1,239 +1,239 @@
 {
-  "name": "argus-review",
-  "displayName": "ARGUS — AI PR Review",
-  "description": "AI-first GitHub PR review inside VS Code: skeptic-lens summaries, per-hunk notes, and review submission.",
-  "version": "0.1.4",
-  "publisher": "ankitvashisht12",
-  "private": false,
-  "license": "MIT",
-  "engines": {
-    "vscode": "^1.90.0"
-  },
-  "categories": [
-    "SCM Providers",
-    "AI",
-    "Other"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/ankitvashisht12/argus.git"
-  },
-  "main": "./dist/extension.js",
-  "activationEvents": [],
-  "contributes": {
-    "configuration": {
-      "title": "ARGUS",
-      "properties": {
-        "argus.reviewTimeoutSeconds": {
-          "type": "number",
-          "default": 0,
-          "minimum": 0,
-          "maximum": 3600,
-          "markdownDescription": "Hard timeout (in seconds) for the AI review of a single pull request.\n\n`0` (default) = **automatic**: ARGUS scales the timeout to the PR size (base 120s, plus per-hunk and per-KB increments, capped at 600s). Set a positive value to override the computed timeout — e.g. `600` for very large PRs. Takes effect on the next review or “ARGUS: Regenerate Review”."
-        }
-      }
-    },
-    "commands": [
-      {
-        "command": "argus.reviewPr",
-        "title": "ARGUS: Review PR…",
-        "icon": "$(add)"
-      },
-      {
-        "command": "argus.regenerate",
-        "title": "ARGUS: Regenerate Review",
-        "icon": "$(sync)"
-      },
-      {
-        "command": "argus.openOverview",
-        "title": "ARGUS: Open Overview",
-        "icon": "$(book)"
-      },
-      {
-        "command": "argus.submitReview",
-        "title": "ARGUS: Submit Review to GitHub",
-        "icon": "$(cloud-upload)"
-      },
-      {
-        "command": "argus.toggleReviewed",
-        "title": "ARGUS: Toggle File Reviewed",
-        "icon": "$(check)"
-      },
-      {
-        "command": "argus.demo",
-        "title": "ARGUS: Open Demo Review (fixture)"
-      },
-      {
-        "command": "argus.createComment",
-        "title": "ARGUS: Add Review Comment"
-      },
-      {
-        "command": "argus.editComment",
-        "title": "ARGUS: Edit Comment",
-        "icon": "$(edit)"
-      },
-      {
-        "command": "argus.deleteComment",
-        "title": "ARGUS: Delete Comment",
-        "icon": "$(trash)"
-      },
-      {
-        "command": "argus.saveComment",
-        "title": "ARGUS: Save Comment"
-      },
-      {
-        "command": "argus.cancelEditComment",
-        "title": "ARGUS: Cancel"
-      }
-    ],
-    "menus": {
-      "commandPalette": [
-        {
-          "command": "argus.toggleReviewed",
-          "when": "false"
-        },
-        {
-          "command": "argus.createComment",
-          "when": "false"
-        },
-        {
-          "command": "argus.editComment",
-          "when": "false"
-        },
-        {
-          "command": "argus.deleteComment",
-          "when": "false"
-        },
-        {
-          "command": "argus.saveComment",
-          "when": "false"
-        },
-        {
-          "command": "argus.cancelEditComment",
-          "when": "false"
-        }
-      ],
-      "view/title": [
-        {
-          "command": "argus.reviewPr",
-          "when": "view == argus.files",
-          "group": "navigation@1"
-        },
-        {
-          "command": "argus.openOverview",
-          "when": "view == argus.files",
-          "group": "navigation@2"
-        },
-        {
-          "command": "argus.regenerate",
-          "when": "view == argus.files",
-          "group": "navigation@3"
-        },
-        {
-          "command": "argus.submitReview",
-          "when": "view == argus.files",
-          "group": "navigation@4"
-        }
-      ],
-      "view/item/context": [
-        {
-          "command": "argus.toggleReviewed",
-          "when": "view == argus.files && viewItem =~ /argusFile/",
-          "group": "inline"
-        }
-      ],
-      "comments/commentThread/context": [
-        {
-          "command": "argus.createComment",
-          "when": "commentController == argus",
-          "group": "inline"
-        }
-      ],
-      "comments/commentThread/title": [
-        {
-          "command": "argus.submitReview",
-          "when": "commentController == argus",
-          "group": "navigation@1"
-        }
-      ],
-      "comments/comment/title": [
-        {
-          "command": "argus.editComment",
-          "when": "commentController == argus && comment == draft",
-          "group": "group@1"
-        },
-        {
-          "command": "argus.deleteComment",
-          "when": "commentController == argus && comment == draft",
-          "group": "group@2"
-        }
-      ],
-      "comments/comment/context": [
-        {
-          "command": "argus.cancelEditComment",
-          "when": "commentController == argus",
-          "group": "inline@1"
-        },
-        {
-          "command": "argus.saveComment",
-          "when": "commentController == argus",
-          "group": "inline@2"
-        }
-      ]
-    },
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "argus",
-          "title": "ARGUS",
-          "icon": "$(eye)"
-        }
-      ],
-      "panel": [
-        {
-          "id": "argus-chat",
-          "title": "ARGUS Chat",
-          "icon": "$(comment-discussion)"
-        }
-      ]
-    },
-    "views": {
-      "argus": [
-        {
-          "id": "argus.files",
-          "name": "Changed Files"
-        },
-        {
-          "id": "argus.details",
-          "name": "File Details",
-          "type": "webview"
-        }
-      ],
-      "argus-chat": [
-        {
-          "id": "argus.sidebar",
-          "name": "Chat",
-          "type": "webview"
-        }
-      ]
-    }
-  },
-  "scripts": {
-    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18 --sourcemap",
-    "watch": "npm run build -- --watch",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "lint": "eslint .",
-    "package": "npx @vscode/vsce package --no-dependencies"
-  },
-  "dependencies": {
-    "@argus/engine": "*"
-  },
-  "devDependencies": {
-    "@types/node": "^22.10.0",
-    "@types/vscode": "^1.90.0",
-    "esbuild": "^0.24.0",
-    "typescript": "^5.7.0"
-  },
-  "icon": "media/icon.png"
+	"name": "argus-review",
+	"displayName": "ARGUS \u2014 AI PR Review",
+	"description": "AI-first GitHub PR review inside VS Code: skeptic-lens summaries, per-hunk notes, and review submission.",
+	"version": "0.1.5",
+	"publisher": "ankitvashisht12",
+	"private": false,
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.90.0"
+	},
+	"categories": [
+		"SCM Providers",
+		"AI",
+		"Other"
+	],
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/ankitvashisht12/argus.git"
+	},
+	"main": "./dist/extension.js",
+	"activationEvents": [],
+	"contributes": {
+		"configuration": {
+			"title": "ARGUS",
+			"properties": {
+				"argus.reviewTimeoutSeconds": {
+					"type": "number",
+					"default": 0,
+					"minimum": 0,
+					"maximum": 3600,
+					"markdownDescription": "Hard timeout (in seconds) for the AI review of a single pull request.\n\n`0` (default) = **automatic**: ARGUS scales the timeout to the PR size (base 120s, plus per-hunk and per-KB increments, capped at 600s). Set a positive value to override the computed timeout \u2014 e.g. `600` for very large PRs. Takes effect on the next review or \u201cARGUS: Regenerate Review\u201d."
+				}
+			}
+		},
+		"commands": [
+			{
+				"command": "argus.reviewPr",
+				"title": "ARGUS: Review PR\u2026",
+				"icon": "$(add)"
+			},
+			{
+				"command": "argus.regenerate",
+				"title": "ARGUS: Regenerate Review",
+				"icon": "$(sync)"
+			},
+			{
+				"command": "argus.openOverview",
+				"title": "ARGUS: Open Overview",
+				"icon": "$(book)"
+			},
+			{
+				"command": "argus.submitReview",
+				"title": "ARGUS: Submit Review to GitHub",
+				"icon": "$(cloud-upload)"
+			},
+			{
+				"command": "argus.toggleReviewed",
+				"title": "ARGUS: Toggle File Reviewed",
+				"icon": "$(check)"
+			},
+			{
+				"command": "argus.demo",
+				"title": "ARGUS: Open Demo Review (fixture)"
+			},
+			{
+				"command": "argus.createComment",
+				"title": "ARGUS: Add Review Comment"
+			},
+			{
+				"command": "argus.editComment",
+				"title": "ARGUS: Edit Comment",
+				"icon": "$(edit)"
+			},
+			{
+				"command": "argus.deleteComment",
+				"title": "ARGUS: Delete Comment",
+				"icon": "$(trash)"
+			},
+			{
+				"command": "argus.saveComment",
+				"title": "ARGUS: Save Comment"
+			},
+			{
+				"command": "argus.cancelEditComment",
+				"title": "ARGUS: Cancel"
+			}
+		],
+		"menus": {
+			"commandPalette": [
+				{
+					"command": "argus.toggleReviewed",
+					"when": "false"
+				},
+				{
+					"command": "argus.createComment",
+					"when": "false"
+				},
+				{
+					"command": "argus.editComment",
+					"when": "false"
+				},
+				{
+					"command": "argus.deleteComment",
+					"when": "false"
+				},
+				{
+					"command": "argus.saveComment",
+					"when": "false"
+				},
+				{
+					"command": "argus.cancelEditComment",
+					"when": "false"
+				}
+			],
+			"view/title": [
+				{
+					"command": "argus.reviewPr",
+					"when": "view == argus.files",
+					"group": "navigation@1"
+				},
+				{
+					"command": "argus.openOverview",
+					"when": "view == argus.files",
+					"group": "navigation@2"
+				},
+				{
+					"command": "argus.regenerate",
+					"when": "view == argus.files",
+					"group": "navigation@3"
+				},
+				{
+					"command": "argus.submitReview",
+					"when": "view == argus.files",
+					"group": "navigation@4"
+				}
+			],
+			"view/item/context": [
+				{
+					"command": "argus.toggleReviewed",
+					"when": "view == argus.files && viewItem =~ /argusFile/",
+					"group": "inline"
+				}
+			],
+			"comments/commentThread/context": [
+				{
+					"command": "argus.createComment",
+					"when": "commentController == argus",
+					"group": "inline"
+				}
+			],
+			"comments/commentThread/title": [
+				{
+					"command": "argus.submitReview",
+					"when": "commentController == argus",
+					"group": "navigation@1"
+				}
+			],
+			"comments/comment/title": [
+				{
+					"command": "argus.editComment",
+					"when": "commentController == argus && comment == draft",
+					"group": "group@1"
+				},
+				{
+					"command": "argus.deleteComment",
+					"when": "commentController == argus && comment == draft",
+					"group": "group@2"
+				}
+			],
+			"comments/comment/context": [
+				{
+					"command": "argus.cancelEditComment",
+					"when": "commentController == argus",
+					"group": "inline@1"
+				},
+				{
+					"command": "argus.saveComment",
+					"when": "commentController == argus",
+					"group": "inline@2"
+				}
+			]
+		},
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "argus",
+					"title": "ARGUS",
+					"icon": "$(eye)"
+				}
+			],
+			"panel": [
+				{
+					"id": "argus-chat",
+					"title": "ARGUS Chat",
+					"icon": "$(comment-discussion)"
+				}
+			]
+		},
+		"views": {
+			"argus": [
+				{
+					"id": "argus.files",
+					"name": "Changed Files"
+				},
+				{
+					"id": "argus.details",
+					"name": "File Details",
+					"type": "webview"
+				}
+			],
+			"argus-chat": [
+				{
+					"id": "argus.sidebar",
+					"name": "Chat",
+					"type": "webview"
+				}
+			]
+		}
+	},
+	"scripts": {
+		"build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18 --sourcemap",
+		"watch": "npm run build -- --watch",
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run",
+		"lint": "eslint .",
+		"package": "npx @vscode/vsce package --no-dependencies"
+	},
+	"dependencies": {
+		"@argus/engine": "*"
+	},
+	"devDependencies": {
+		"@types/node": "^22.10.0",
+		"@types/vscode": "^1.90.0",
+		"esbuild": "^0.24.0",
+		"typescript": "^5.7.0"
+	},
+	"icon": "media/icon.png"
 }

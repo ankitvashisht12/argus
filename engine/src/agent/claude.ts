@@ -569,7 +569,17 @@ export class ClaudeAgent {
         finished = true;
         cleanup();
         child.kill('SIGTERM');
-        reject(new Error('Claude Code timed out.'));
+        // Carry the evidence: how long we waited and what the CLI last said,
+        // so a timeout is diagnosable instead of a bare message.
+        const detail = oneLine(stderr).slice(-300) || oneLine(stdout).slice(-300);
+        reject(
+          new Error(
+            `Claude Code timed out after ${Math.round(timeoutMs / 1000)}s.` +
+              (detail
+                ? ` Last output: ${detail}`
+                : ' No output was received from the CLI — it may be stuck on login/permissions; run `claude` in a terminal to check.'),
+          ),
+        );
       }, timeoutMs);
 
       const onAbort = (): void => {

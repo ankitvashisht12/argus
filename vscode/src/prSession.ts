@@ -737,8 +737,13 @@ export class PrSession {
   #reviewErrorMessage(rawMessage: string, timeoutMs: number): string {
     if (!/timed out/i.test(rawMessage)) return rawMessage;
     const seconds = Math.round(timeoutMs / 1000);
+    // Keep the engine's evidence (elapsed + last CLI output) so the user can
+    // see WHY it timed out, then add the call to action.
+    const detail = /(Last output:|No output was received)/.test(rawMessage)
+      ? ` ${rawMessage}`
+      : '';
     return (
-      `The AI review timed out after ${seconds}s. This PR may be large or slow ` +
+      `The AI review timed out after ${seconds}s.${detail} This PR may be large or slow ` +
       'to analyze — run “ARGUS: Regenerate Review” to try again, or raise the ' +
       '“argus.reviewTimeoutSeconds” setting to allow more time. The diff is ' +
       'still available without AI.'
