@@ -37,7 +37,8 @@ or search for *ARGUS — AI PR Review* in the Extensions view.
 ## Usage
 
 1. Run **ARGUS: Review PR…** and paste a PR URL or `owner/repo#number`.
-2. Browse the changed files, open diffs, and read the per-hunk notes.
+2. Browse the changed files, open diffs, and read the per-hunk notes — they
+   stream in file by file, with live progress in the status bar.
 3. Open **ARGUS: Open Overview** for the summary / intent / critical / flow.
 4. Add your own comments on diff lines, then **ARGUS: Submit Review to GitHub**.
 

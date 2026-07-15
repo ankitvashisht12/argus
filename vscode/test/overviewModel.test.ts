@@ -20,15 +20,21 @@ const META = {
   author: 'octocat',
 };
 
-function fakeSession(uncoveredHunkIds: string[]): PrSession {
+function fakeSession(
+  uncoveredHunkIds: string[],
+  extra: Record<string, unknown> = {},
+): PrSession {
   return {
     meta: META,
     reviewError: null,
+    reviewStatus: 'ready',
+    reviewProgress: null,
     overview: { summary: 's', intent: 'i', critical: [], flow: [] },
     files: [],
     review: { uncoveredHunkIds },
     fileReview: () => undefined,
     isReviewed: () => false,
+    ...extra,
   } as unknown as PrSession;
 }
 
@@ -49,5 +55,58 @@ describe('buildOverviewModel uncoveredCount', () => {
     const model = buildOverviewModel(null);
     expect(model.state).toBe('empty');
     expect(model.uncoveredCount).toBe(0);
+  });
+});
+
+describe('buildOverviewModel progressive progress (v0.2.0)', () => {
+  const PROGRESS = {
+    done: 2,
+    failed: 1,
+    total: 4,
+    running: ['src/b.ts'],
+    files: [
+      { path: 'src/a.ts', status: 'ready', error: null },
+      { path: 'src/b.ts', status: 'running', error: null },
+      { path: 'src/c.ts', status: 'error', error: 'boom' },
+      { path: 'src/d.ts', status: 'pending', error: null },
+    ],
+  };
+
+  it('exposes live progress + reviewing while the run is in flight (partial ready)', () => {
+    const model = buildOverviewModel(
+      fakeSession([], { reviewStatus: 'running', reviewProgress: PROGRESS }),
+    );
+    expect(model.state).toBe('ready'); // intent landed → render it
+    expect(model.reviewing).toBe(true);
+    expect(model.progress).toEqual(PROGRESS);
+  });
+
+  it('suppresses the uncovered-hunks line while files are still landing', () => {
+    const model = buildOverviewModel(
+      fakeSession(['x:h1'], { reviewStatus: 'running', reviewProgress: PROGRESS }),
+    );
+    expect(model.uncoveredCount).toBe(0);
+  });
+
+  it('carries progress into the loading state before the intent lands', () => {
+    const model = buildOverviewModel(
+      fakeSession([], {
+        overview: null,
+        review: null,
+        reviewStatus: 'running',
+        reviewProgress: PROGRESS,
+      }),
+    );
+    expect(model.state).toBe('loading');
+    expect(model.progress).toEqual(PROGRESS);
+  });
+
+  it('keeps progress at settle so failed files stay retryable from the Overview', () => {
+    const model = buildOverviewModel(
+      fakeSession([], { reviewStatus: 'ready', reviewProgress: PROGRESS }),
+    );
+    expect(model.state).toBe('ready');
+    expect(model.reviewing).toBe(false);
+    expect(model.progress?.failed).toBe(1);
   });
 });

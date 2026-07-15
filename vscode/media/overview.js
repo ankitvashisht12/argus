@@ -114,6 +114,50 @@
     return section;
   }
 
+  /** Status glyphs for the per-file progress rows. */
+  var STATUS_GLYPH = { pending: '\u25CB', running: '\u25D0', ready: '\u2713', error: '\u26A0' };
+
+  /** @param {any} progress @param {boolean} reviewing */
+  function renderProgress(progress, reviewing) {
+    const section = el('section', 'section progress');
+    const line = el('div', 'progress-line');
+    line.appendChild(
+      el('span', 'progress-text',
+        reviewing
+          ? 'Reviewing\u2026 ' + progress.done + '/' + progress.total + ' files'
+          : 'Reviewed ' + progress.done + '/' + progress.total + ' files' +
+            (progress.failed ? ' \u00B7 ' + progress.failed + ' failed' : ''))
+    );
+    section.appendChild(line);
+
+    const bar = el('div', 'progress-bar');
+    const fill = el('div', 'progress-fill');
+    fill.style.width = progress.total
+      ? Math.round((progress.done / progress.total) * 100) + '%'
+      : '0%';
+    bar.appendChild(fill);
+    section.appendChild(bar);
+
+    const list = el('div', 'progress-files');
+    for (const f of progress.files) {
+      const row = el('div', 'progress-row status-' + f.status);
+      row.appendChild(el('span', 'progress-glyph', STATUS_GLYPH[f.status] || '\u25CB'));
+      row.appendChild(el('span', 'progress-path', f.path));
+      if (f.status === 'error') {
+        if (f.error) row.title = f.error;
+        const retry = /** @type {HTMLButtonElement} */ (el('button', 'btn btn-small', 'Retry'));
+        retry.type = 'button';
+        retry.addEventListener('click', function () {
+          vscode.postMessage({ type: 'retryFile', path: f.path });
+        });
+        row.appendChild(retry);
+      }
+      list.appendChild(row);
+    }
+    section.appendChild(list);
+    return section;
+  }
+
   /** @param {number} count */
   function renderUncovered(count) {
     const section = el('section', 'section uncovered');
@@ -134,6 +178,9 @@
   function renderReady(model) {
     const frag = document.createDocumentFragment();
     frag.appendChild(renderHeader(model));
+    if (model.progress && (model.reviewing || model.progress.failed > 0)) {
+      frag.appendChild(renderProgress(model.progress, model.reviewing));
+    }
     if (model.uncoveredCount > 0) frag.appendChild(renderUncovered(model.uncoveredCount));
     frag.appendChild(paragraphSection('Summary', model.summary, ''));
     frag.appendChild(paragraphSection('Intent', model.intent, 'intent'));
@@ -151,9 +198,10 @@
     state.appendChild(el('div', 'spinner'));
     state.appendChild(el('h2', undefined, 'Generating review…'));
     state.appendChild(
-      el('p', undefined, 'ARGUS is reading the diff with a skeptic’s eye. This usually takes a few seconds.')
+      el('p', undefined, 'ARGUS reviews file by file — notes appear as each file completes.')
     );
     frag.appendChild(state);
+    if (model.progress) frag.appendChild(renderProgress(model.progress, true));
     return frag;
   }
 

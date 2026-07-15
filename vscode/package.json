@@ -1,8 +1,8 @@
 {
 	"name": "argus-review",
-	"displayName": "ARGUS \u2014 AI PR Review",
+	"displayName": "ARGUS — AI PR Review",
 	"description": "AI-first GitHub PR review inside VS Code: skeptic-lens summaries, per-hunk notes, and review submission.",
-	"version": "0.1.5",
+	"version": "0.2.0",
 	"publisher": "ankitvashisht12",
 	"private": false,
 	"license": "MIT",
@@ -29,14 +29,14 @@
 					"default": 0,
 					"minimum": 0,
 					"maximum": 3600,
-					"markdownDescription": "Hard timeout (in seconds) for the AI review of a single pull request.\n\n`0` (default) = **automatic**: ARGUS scales the timeout to the PR size (base 120s, plus per-hunk and per-KB increments, capped at 600s). Set a positive value to override the computed timeout \u2014 e.g. `600` for very large PRs. Takes effect on the next review or \u201cARGUS: Regenerate Review\u201d."
+					"markdownDescription": "Per-file timeout (in seconds) for the AI review. ARGUS reviews progressively, one file per call, so this bounds a single file's call — not the whole PR.\n\n`0` (default) = 120s per file. Set a positive value to override — e.g. `300` for very large files. Takes effect on the next review or “ARGUS: Regenerate Review”."
 				}
 			}
 		},
 		"commands": [
 			{
 				"command": "argus.reviewPr",
-				"title": "ARGUS: Review PR\u2026",
+				"title": "ARGUS: Review PR…",
 				"icon": "$(add)"
 			},
 			{

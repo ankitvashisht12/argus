@@ -151,7 +151,32 @@ function onReviewChanged(session: PrSession): void {
   if (session !== currentSession) return;
   refreshReviewingStatus();
   if (session.reviewStatus === 'error') notifyReviewState(session);
-  if (session.reviewStatus === 'ready') notifyUncoveredHunks(session);
+  if (session.reviewStatus === 'ready') {
+    notifyUncoveredHunks(session);
+    notifyFailedFiles(session);
+  }
+}
+
+/**
+ * When a review settles with SOME files unreviewable (their per-file call
+ * failed or timed out while the rest landed), surface a one-shot warning with a
+ * path into the Overview, where each failed file has its own Retry.
+ */
+function notifyFailedFiles(session: PrSession): void {
+  const failed = session.reviewProgress?.failed ?? 0;
+  if (failed === 0) return;
+  const noun = failed === 1 ? 'file' : 'files';
+  output.appendLine(`Review incomplete: ${failed} ${noun} could not be reviewed.`);
+  void vscode.window
+    .showWarningMessage(
+      `ARGUS: ${failed} ${noun} could not be reviewed. Retry them from the Overview.`,
+      'Open Overview',
+    )
+    .then((choice) => {
+      if (choice === 'Open Overview') {
+        void vscode.commands.executeCommand('argus.openOverview');
+      }
+    });
 }
 
 /**
@@ -179,11 +204,30 @@ function notifyUncoveredHunks(session: PrSession): void {
     });
 }
 
-/** Show the spinner while the current review is running; hide it otherwise. */
+/**
+ * Show the spinner with live per-file progress while the review is running
+ * ("ARGUS reviewing loop.ts · 7/23"); hide it otherwise.
+ */
 function refreshReviewingStatus(): void {
   if (!reviewingStatusBar) return;
-  if (currentSession?.reviewStatus === 'running') reviewingStatusBar.show();
-  else reviewingStatusBar.hide();
+  if (currentSession?.reviewStatus !== 'running') {
+    reviewingStatusBar.hide();
+    return;
+  }
+  const progress = currentSession.reviewProgress;
+  if (progress) {
+    const current = progress.running[0]?.split('/').pop();
+    reviewingStatusBar.text = current
+      ? `$(sync~spin) ARGUS reviewing ${current} · ${progress.done}/${progress.total}`
+      : `$(sync~spin) ARGUS reviewing… ${progress.done}/${progress.total}`;
+    reviewingStatusBar.tooltip =
+      `ARGUS progressive review: ${progress.done} of ${progress.total} files done` +
+      (progress.failed ? `, ${progress.failed} failed (retry in the Overview)` : '') +
+      '.';
+  } else {
+    reviewingStatusBar.text = '$(sync~spin) ARGUS reviewing…';
+  }
+  reviewingStatusBar.show();
 }
 
 /** Nudge each lazily-bound surface to re-read the session accessor. */

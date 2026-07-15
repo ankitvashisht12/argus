@@ -1,9 +1,9 @@
 /**
- * Review pipeline: build a budgeted digest of a PR's hunks, assemble the
- * reviewer-skeptic prompt, define the structured-output schema, and normalize
- * the model's response by resolving request-local hunk-ID aliases to real diff
- * anchors (anchoring approach adapted from codiff, MIT — see
- * THIRD-PARTY-NOTICES; prompt/schema content is original).
+ * Review pipeline primitives: budgeted hunk digests, reading-order buckets, and
+ * normalization of a structured review against the real parsed diff (anchoring
+ * approach adapted from codiff, MIT — see THIRD-PARTY-NOTICES). The review
+ * orchestration itself lives in `progressive.ts` (per-file calls); this module
+ * stays pure building blocks shared by review and chat.
  *
  * Pure Node — no `vscode`.
  *
@@ -16,9 +16,7 @@ import type {
   FileChange,
   Hunk,
   HunkReview,
-  JsonSchema,
   NormalizedReview,
-  PullRequestMeta,
   ReviewResult,
 } from '../types.js';
 
@@ -402,183 +400,11 @@ export function buildDigest(files: FileChange[], budget?: DigestBudget): Digest 
   };
 }
 
-/**
- * Assemble the reviewer-skeptic review prompt from PR intent sources (title,
- * body) and the budgeted digest. The prompt content is original to ARGUS.
- *
- * @param meta   PR metadata (title/body drive intent).
- * @param digest The budgeted hunk digest.
- * @returns The full prompt text to send to the agent.
- */
-export function buildReviewPrompt(meta: PullRequestMeta, digest: Digest): string {
-  const intentBody = meta.body.trim() ? meta.body.trim() : '(no description provided)';
-
-  const truncationNote = digest.truncated
-    ? `Note: ${digest.truncatedHunks.length} hunk excerpt(s) were truncated to fit the ` +
-      `size budget (marked "[truncated]"). Reason carefully about what the omitted ` +
-      `lines likely contain and say so in "lookout" when it affects your confidence.`
-    : 'All hunk excerpts are included in full.';
-
-  const hunkBlocks = digest.hunks
-    .map((h) => {
-      const flag = h.truncated ? ' [truncated]' : '';
-      return `### ${h.alias} — ${h.path}${flag}\n\`\`\`diff\n${h.excerpt}\n\`\`\``;
-    })
-    .join('\n\n');
-
-  const aliasList = digest.hunks.map((h) => h.alias).join(', ');
-  const hunkCount = digest.hunks.length;
-
-  return `You are ARGUS, a rigorous and skeptical pull-request reviewer. Your job is
-not to praise the change but to understand it precisely and to surface what a
-careful reviewer must verify before trusting it. Assume nothing works until the
-diff shows it does. Do not invent problems, but do not gloss over real risk.
-
-## PR intent (author-stated — treat as a claim to test, not proof)
-
-The title and body below are the author's stated intent. Use them to infer what
-the change is *trying* to accomplish, then judge whether the diff actually
-delivers that intent.
-
-Title: ${meta.title}
-
-Body:
-${intentBody}
-
-## The change
-
-Below is a digest of every changed hunk. Each hunk has a stable alias (h1, h2,
-…). ${truncationNote}
-
-${hunkBlocks}
-
-## What to produce
-
-Return a single JSON object (and nothing else) conforming to the provided
-schema. Requirements:
-
-- "summary": one plain-language paragraph describing what this PR does.
-- "intent": your own explicit statement of what the change is trying to
-  accomplish, grounded in the stated intent and confirmed (or contradicted) by
-  the diff. Call out any gap between claim and code.
-- "critical": the things a reviewer absolutely must know or verify before
-  approving — correctness, security, data-loss, breaking-change, or missing-test
-  risks. Empty array only if there is genuinely nothing critical.
-- "flow": an ordered list of steps a reviewer should read the change in to
-  understand it, from entry point to effect. Each step is one short sentence.
-- "files": for each meaningfully changed file, its role in the change, a short
-  note on what it contributes, and reading guidance:
-  - "bucket": a short group label for the file (e.g. "Core logic", "API surface",
-    "Tests", "Docs", "Config & CI", "Generated"). Files that share a concern
-    share the same label.
-  - "readingOrder": an integer rank (0 = read first) giving the order a reviewer
-    should read the files in. Order the files so that each is comprehensible from
-    the ones before it: foundational/core code and the things others depend on
-    first, then the code built on top of them, then tests, then docs — with
-    generated files, lockfiles, and CI/config configuration LAST.
-- "hunks": you MUST return exactly one entry for EVERY hunk alias listed above.
-  There are ${hunkCount} hunk(s): ${aliasList}. Every one of these aliases MUST
-  appear in "hunks" exactly once — do not skip any, and do not merge several
-  hunks into one entry. Trivial, mechanical, or supporting hunks still get their
-  own entry: set "importance": "context" and give a brief "why"/"lookout" rather
-  than omitting them. A missing alias is a contract violation. For each entry:
-  - "hunkId": the hunk's alias exactly as given above (e.g. "h3"). Reference
-    hunks ONLY by these aliases. Never use line numbers or file paths as ids.
-  - "why": why this specific change exists / what it does, grounded in the PR
-    intent.
-  - "lookout": the skeptic note — what could break, what edge case or invariant
-    this touches, what a reviewer should double-check. For a trivial hunk it is
-    fine to say the change is mechanical and low-risk.
-  - "importance": "critical" (must-review risk), "normal" (worth a look), or
-    "context" (mechanical / supporting).
-
-Output JSON only. No markdown, no commentary outside the JSON object.`;
-}
-
-/**
- * Build the JSON Schema for the structured review output. Mirrors
- * {@link ReviewResult} (version/summary/intent/critical/flow/files/hunks).
- * Original to ARGUS. `hunks[].hunkId` MUST be a request-local alias (h1, h2, …),
- * never a line number or path — the normalizer resolves it back to a stable id.
- *
- * When `hunkCount` is a positive integer the `hunks` array is given
- * `minItems: hunkCount`. Under constrained/structured decoding this steers the
- * model to emit at least one entry per hunk alias, which — together with the
- * prompt's full-coverage contract — is what stops most hunks from silently going
- * uncommented. Callers with the digest in hand (which knows N) should prefer
- * this over the static {@link reviewSchema}.
- *
- * @param hunkCount Number of hunk aliases the model was shown (digest length).
- *   Omit / pass 0 for no lower bound.
- */
-export function buildReviewSchema(hunkCount = 0): JsonSchema {
-  const hunks: JsonSchema = {
-    type: 'array',
-    items: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['hunkId', 'why', 'lookout', 'importance'],
-      properties: {
-        hunkId: {
-          type: 'string',
-          description:
-            'Request-local hunk alias exactly as given in the prompt (e.g. "h3"). Never a line number or path.',
-        },
-        why: { type: 'string' },
-        lookout: { type: 'string' },
-        importance: { enum: ['critical', 'normal', 'context'] },
-      },
-    },
-  };
-  if (Number.isInteger(hunkCount) && hunkCount > 0) {
-    hunks.minItems = hunkCount;
-  }
-
-  return {
-    $schema: 'http://json-schema.org/draft-07/schema#',
-    type: 'object',
-    additionalProperties: false,
-    required: ['version', 'summary', 'intent', 'critical', 'flow', 'files', 'hunks'],
-    properties: {
-      version: { const: 1 },
-      summary: { type: 'string' },
-      intent: { type: 'string' },
-      critical: { type: 'array', items: { type: 'string' } },
-      flow: { type: 'array', items: { type: 'string' } },
-      files: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['path', 'role', 'note', 'bucket', 'readingOrder'],
-          properties: {
-            path: { type: 'string' },
-            role: { type: 'string' },
-            note: { type: 'string' },
-            bucket: {
-              type: 'string',
-              description:
-                'Short reading-group label for the file (e.g. "Core logic", "Tests", "Config & CI").',
-            },
-            readingOrder: {
-              type: 'integer',
-              description:
-                'Reading rank (0 = read first): dependencies/core first, generated files and config last.',
-            },
-          },
-        },
-      },
-      hunks,
-    },
-  };
-}
-
-/**
- * Static review schema with no per-hunk lower bound. Retained for callers that
- * do not have the hunk count on hand; prefer {@link buildReviewSchema} with the
- * digest length so coverage is enforced at the schema level.
- */
-export const reviewSchema: JsonSchema = buildReviewSchema();
+/* The single-call all-hunks review prompt/schema that used to live here was
+ * retired in v0.2.0: on large PRs it starved every hunk's excerpt to fit one
+ * global budget and forced a note per hunk, which degenerated into filler.
+ * The progressive per-file orchestrator in `progressive.ts` is the only
+ * review path now. */
 
 /**
  * Line number (1-based, on `side`) of the FIRST added/changed line in a hunk.

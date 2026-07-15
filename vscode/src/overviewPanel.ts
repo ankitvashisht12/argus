@@ -89,6 +89,26 @@ export interface OverviewModel {
   readonly uncoveredCount: number;
   /** Actionable error text (`error` only), else `null`. */
   readonly error: string | null;
+  /** Whether the progressive review is still running (partial render). */
+  readonly reviewing: boolean;
+  /** Live per-file progress of the progressive review, `null` outside a run. */
+  readonly progress: OverviewProgressVM | null;
+}
+
+/** Per-file progress block for the Overview (progressive review). */
+export interface OverviewProgressVM {
+  /** Files whose review landed. */
+  readonly done: number;
+  /** Files whose review call failed (each row gets a Retry). */
+  readonly failed: number;
+  /** Total files in the run. */
+  readonly total: number;
+  /** Per-file rows in review order. */
+  readonly files: readonly {
+    readonly path: string;
+    readonly status: string;
+    readonly error: string | null;
+  }[];
 }
 
 /**
@@ -120,6 +140,8 @@ export function buildOverviewModel(session: PrSession | null): OverviewModel {
     files: [],
     uncoveredCount: 0,
     error: null,
+    reviewing: false,
+    progress: null,
   };
 
   if (!session) return blank;
@@ -134,6 +156,9 @@ export function buildOverviewModel(session: PrSession | null): OverviewModel {
     url: prGitHubUrl(meta.owner, meta.repo, meta.number),
   };
 
+  const reviewing = session.reviewStatus === 'running';
+  const progress = session.reviewProgress ?? null;
+
   // Error beats absence (contract 19).
   if (session.reviewError) {
     return { ...base, state: 'error', error: session.reviewError };
@@ -141,7 +166,7 @@ export function buildOverviewModel(session: PrSession | null): OverviewModel {
 
   const overview = session.overview;
   if (!overview) {
-    return { ...base, state: 'loading' };
+    return { ...base, state: 'loading', reviewing, progress };
   }
 
   const files: OverviewFileVM[] = session.files.map((file) => {
@@ -165,7 +190,11 @@ export function buildOverviewModel(session: PrSession | null): OverviewModel {
     critical: overview.critical,
     flow: overview.flow,
     files,
-    uncoveredCount: session.review?.uncoveredHunkIds.length ?? 0,
+    // While files are still landing, a transient coverage gap is expected —
+    // only report uncovered hunks once the run has settled.
+    uncoveredCount: reviewing ? 0 : (session.review?.uncoveredHunkIds.length ?? 0),
+    reviewing,
+    progress,
   };
 }
 
@@ -217,7 +246,8 @@ type ToWebview = { readonly type: 'render'; readonly model: OverviewModel };
 type FromWebview =
   | { readonly type: 'ready' }
   | { readonly type: 'openDiff'; readonly path: string }
-  | { readonly type: 'regenerate' };
+  | { readonly type: 'regenerate' }
+  | { readonly type: 'retryFile'; readonly path: string };
 
 /**
  * Command the Files section asks the host to run for a clicked file. NOT declared
@@ -326,6 +356,9 @@ export function registerOverviewPanel(
             break;
           case 'regenerate':
             void vscode.commands.executeCommand('argus.regenerate');
+            break;
+          case 'retryFile':
+            void getSession()?.retryFile(message.path);
             break;
         }
       },

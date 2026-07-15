@@ -2,13 +2,10 @@ import { describe, it, expect } from 'vitest';
 import type { FileChange, Hunk, ReviewResult } from '../src/types.js';
 import {
   buildDigest,
-  buildReviewPrompt,
-  buildReviewSchema,
   bucketFiles,
   heuristicBucket,
   firstChangedLine,
   normalizeReview,
-  reviewSchema,
   READING_BUCKETS,
   DEFAULT_DIGEST_BUDGET,
   LARGE_DIGEST_BUDGET,
@@ -204,134 +201,6 @@ describe('buildDigest', () => {
     const digest = buildDigest([binary, addedFile]);
     expect(digest.hunks.map((h) => h.alias)).toEqual(['h1']);
     expect(digest.aliasToHunkId).toEqual({ h1: `src/new.ts:${SHA}:h1` });
-  });
-});
-
-/* -------------------------------------------------------------------------- */
-/* buildReviewPrompt                                                           */
-/* -------------------------------------------------------------------------- */
-
-describe('buildReviewPrompt', () => {
-  const meta = {
-    owner: 'o',
-    repo: 'r',
-    number: 7,
-    title: 'Add retry logic',
-    body: 'Retries failed requests up to 3 times.',
-    baseSha: 'base',
-    headSha: SHA,
-    baseRef: 'main',
-    headRef: 'feat',
-    author: 'dev',
-  };
-
-  it('embeds intent sources, aliases, and instructs alias-only JSON output', () => {
-    const digest = buildDigest(threeFileFixture);
-    const prompt = buildReviewPrompt(meta, digest);
-    expect(prompt).toContain('Add retry logic');
-    expect(prompt).toContain('Retries failed requests up to 3 times.');
-    // Every alias appears in the prompt.
-    for (const h of digest.hunks) {
-      expect(prompt).toContain(h.alias);
-    }
-    expect(prompt.toLowerCase()).toContain('json only');
-    expect(prompt).toContain('Never use line numbers');
-  });
-
-  it('demands a note for EVERY hunk alias (full coverage), enumerating them', () => {
-    const digest = buildDigest(threeFileFixture);
-    const prompt = buildReviewPrompt(meta, digest);
-    // Contract: one entry per hunk, not just the "interesting" ones.
-    expect(prompt).toContain('one entry for EVERY hunk alias');
-    // The exact count and alias list are spelled out so the model can self-check.
-    expect(prompt).toContain('There are 4 hunk(s): h1, h2, h3, h4');
-    // Trivial hunks must still be covered (as "context"), not omitted.
-    expect(prompt).toContain('"importance": "context"');
-    expect(prompt).toContain('A missing alias is a contract violation.');
-  });
-
-  it('instructs per-file reading guidance (bucket + dependency-first order)', () => {
-    const digest = buildDigest(threeFileFixture);
-    const prompt = buildReviewPrompt(meta, digest);
-    expect(prompt).toContain('"bucket"');
-    expect(prompt).toContain('"readingOrder"');
-    expect(prompt).toContain('comprehensible from');
-    expect(prompt).toContain('LAST');
-  });
-
-  it('surfaces truncation in the prompt when the digest was clamped', () => {
-    const digest = buildDigest(threeFileFixture, { perHunk: 10, total: 1_000 });
-    const prompt = buildReviewPrompt(meta, digest);
-    expect(prompt).toContain('truncated');
-    expect(prompt).toContain('[truncated]');
-  });
-
-  it('tolerates an empty PR body', () => {
-    const digest = buildDigest(threeFileFixture);
-    const prompt = buildReviewPrompt({ ...meta, body: '   ' }, digest);
-    expect(prompt).toContain('(no description provided)');
-  });
-});
-
-/* -------------------------------------------------------------------------- */
-/* reviewSchema                                                                 */
-/* -------------------------------------------------------------------------- */
-
-describe('reviewSchema', () => {
-  it('forces the ReviewResult shape and pins version to 1', () => {
-    const props = (reviewSchema as any).properties;
-    expect((reviewSchema as any).required).toEqual([
-      'version',
-      'summary',
-      'intent',
-      'critical',
-      'flow',
-      'files',
-      'hunks',
-    ]);
-    expect(props.version).toEqual({ const: 1 });
-    expect((reviewSchema as any).additionalProperties).toBe(false);
-    const hunkItem = props.hunks.items;
-    expect(hunkItem.required).toEqual(['hunkId', 'why', 'lookout', 'importance']);
-    expect(hunkItem.properties.importance.enum).toEqual([
-      'critical',
-      'normal',
-      'context',
-    ]);
-  });
-
-  it('static reviewSchema imposes no per-hunk lower bound', () => {
-    expect((reviewSchema as any).properties.hunks.minItems).toBeUndefined();
-  });
-
-  it('requires per-file reading guidance (bucket + readingOrder)', () => {
-    const fileItem = (reviewSchema as any).properties.files.items;
-    expect(fileItem.required).toEqual(['path', 'role', 'note', 'bucket', 'readingOrder']);
-    expect(fileItem.properties.bucket.type).toBe('string');
-    expect(fileItem.properties.readingOrder.type).toBe('integer');
-    expect(fileItem.additionalProperties).toBe(false);
-  });
-});
-
-describe('buildReviewSchema', () => {
-  it('pins hunks.minItems to the hunk count so coverage is enforced', () => {
-    const schema = buildReviewSchema(8) as any;
-    expect(schema.properties.hunks.minItems).toBe(8);
-    // Everything else matches the static schema shape.
-    expect(schema.required).toEqual(reviewSchema.required);
-    expect(schema.properties.hunks.items).toEqual(
-      (reviewSchema as any).properties.hunks.items,
-    );
-  });
-
-  it('omits minItems for a zero / missing hunk count', () => {
-    expect((buildReviewSchema(0) as any).properties.hunks.minItems).toBeUndefined();
-    expect((buildReviewSchema() as any).properties.hunks.minItems).toBeUndefined();
-  });
-
-  it('never mutates the shared static reviewSchema', () => {
-    buildReviewSchema(5);
-    expect((reviewSchema as any).properties.hunks.minItems).toBeUndefined();
   });
 });
 

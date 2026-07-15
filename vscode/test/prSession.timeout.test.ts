@@ -4,27 +4,24 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import {
-  buildDigest,
-  parseUnifiedDiff,
-  resolveReviewTimeoutMs,
-} from '@argus/engine';
+import { PER_FILE_TIMEOUT_MS } from '@argus/engine';
 import type {
   AgentResult,
   AgentRunOptions,
   ClaudeAgent,
   GhClient,
+  IntentResult,
   JsonSchema,
   PullRequestMeta,
-  ReviewResult,
 } from '@argus/engine';
 
 import { PrSession } from '../src/prSession';
 
 /**
- * Bug 2: the review timeout must be scaled to digest size and overridable via
- * the `argus.reviewTimeoutSeconds` setting, then threaded into the engine call.
- * These tests capture the `timeoutMs` that `PrSession` hands the agent.
+ * The progressive review runs ONE call per file with a fixed per-file timeout;
+ * a positive `argus.reviewTimeoutSeconds` overrides that per-file budget. These
+ * tests capture the `timeoutMs` PrSession hands the agent for FILE calls (the
+ * intent pass has its own fixed budget) and check the timeout error posture.
  */
 
 const META: PullRequestMeta = {
@@ -52,15 +49,36 @@ const DIFF = [
   '',
 ].join('\n');
 
-const REVIEW: ReviewResult = {
-  version: 1,
+const INTENT: IntentResult = {
   summary: 'A summary.',
   intent: 'The intent.',
   critical: [],
   flow: [],
-  files: [],
-  hunks: [],
 };
+
+function isIntentSchema(schema: JsonSchema): boolean {
+  return (
+    Array.isArray((schema as { required?: string[] }).required) &&
+    (schema as { required: string[] }).required.includes('summary')
+  );
+}
+
+function filePayload(schema: JsonSchema): unknown {
+  const n =
+    (schema as { properties: { hunks: { minItems?: number } } }).properties.hunks
+      .minItems ?? 0;
+  return {
+    role: 'core',
+    note: 'n',
+    bucket: 'Core logic',
+    hunks: Array.from({ length: n }, (_, i) => ({
+      hunkId: `h${i + 1}`,
+      why: 'Exists for the change.',
+      lookout: 'Verify behavior.',
+      importance: 'normal',
+    })),
+  };
+}
 
 function ghStub(): GhClient {
   return {
@@ -71,7 +89,7 @@ function ghStub(): GhClient {
   } as unknown as GhClient;
 }
 
-/** Agent that records the `timeoutMs` it is called with, then succeeds. */
+/** Agent that records the `timeoutMs` of every FILE call, then succeeds. */
 function capturingAgent(): {
   agent: ClaudeAgent;
   captured: () => number | undefined;
@@ -81,11 +99,14 @@ function capturingAgent(): {
     isAvailable: async () => true,
     runStructured: async (
       _prompt: string,
-      _schema: JsonSchema,
+      schema: JsonSchema,
       opts?: AgentRunOptions,
     ) => {
+      if (isIntentSchema(schema)) {
+        return { data: INTENT, model: 'm', raw: '{}' } satisfies AgentResult<IntentResult>;
+      }
       seen = opts?.timeoutMs;
-      return { data: REVIEW, model: 'm', raw: '{}' } satisfies AgentResult<ReviewResult>;
+      return { data: filePayload(schema), model: 'm', raw: '{}' } as AgentResult<unknown>;
     },
   } as unknown as ClaudeAgent;
   return { agent, captured: () => seen };
@@ -95,17 +116,8 @@ async function tmpDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'argus-timeout-'));
 }
 
-/** Recompute the digest the session builds, to derive the expected timeout. */
-function expectedAutoTimeout(): number {
-  const digest = buildDigest(parseUnifiedDiff(DIFF, META.headSha));
-  return resolveReviewTimeoutMs(undefined, {
-    hunkCount: digest.hunks.length,
-    digestChars: digest.totalChars,
-  });
-}
-
-describe('PrSession threads a size-scaled review timeout into the agent', () => {
-  it('uses the auto (computed) timeout when the setting is unset', async () => {
+describe('PrSession threads the per-file review timeout into the agent', () => {
+  it('uses the fixed per-file default when the setting is unset', async () => {
     const { agent, captured } = capturingAgent();
     const session = await PrSession.load({
       owner: 'acme',
@@ -118,14 +130,12 @@ describe('PrSession threads a size-scaled review timeout into the agent', () => 
     });
     await session.reviewSettled();
 
-    expect(captured()).toBe(expectedAutoTimeout());
-    // Regardless of exact arithmetic, it must beat the old fixed 90s default.
-    expect(captured()).toBeGreaterThan(90_000);
+    expect(captured()).toBe(PER_FILE_TIMEOUT_MS);
 
     session.dispose();
   });
 
-  it('lets a positive setting override the computed timeout', async () => {
+  it('lets a positive setting override the per-file timeout', async () => {
     const { agent, captured } = capturingAgent();
     const session = await PrSession.load({
       owner: 'acme',
@@ -143,11 +153,11 @@ describe('PrSession threads a size-scaled review timeout into the agent', () => 
     session.dispose();
   });
 
-  it('turns a timeout failure into an actionable error (setting + regenerate)', async () => {
+  it('turns an all-files timeout into an actionable error (setting + regenerate)', async () => {
     const agent = {
       isAvailable: async () => true,
       runStructured: async () => {
-        throw new Error('Claude Code timed out.');
+        throw new Error('Claude Code timed out after 120s. No output was received from the CLI.');
       },
     } as unknown as ClaudeAgent;
 
@@ -172,6 +182,32 @@ describe('PrSession threads a size-scaled review timeout into the agent', () => 
     session.dispose();
   });
 
+  it('maps a not-logged-in failure to the /login call to action', async () => {
+    const agent = {
+      isAvailable: async () => true,
+      runStructured: async () => {
+        throw new Error('API error: authentication_error — please run /login');
+      },
+    } as unknown as ClaudeAgent;
+
+    const session = await PrSession.load({
+      owner: 'acme',
+      repo: 'widgets',
+      number: 1,
+      storageDir: await tmpDir(),
+      gh: ghStub(),
+      agent,
+      reviewTimeoutSeconds: () => undefined,
+    });
+    await session.reviewSettled();
+
+    expect(session.reviewStatus).toBe('error');
+    expect(session.reviewError ?? '').toMatch(/not logged in/i);
+    expect(session.reviewError ?? '').toContain('/login');
+
+    session.dispose();
+  });
+
   it('re-reads the setting on regenerate (a live change takes effect)', async () => {
     const { agent, captured } = capturingAgent();
     let configured: number | undefined = undefined;
@@ -185,7 +221,7 @@ describe('PrSession threads a size-scaled review timeout into the agent', () => 
       reviewTimeoutSeconds: () => configured,
     });
     await session.reviewSettled();
-    expect(captured()).toBe(expectedAutoTimeout());
+    expect(captured()).toBe(PER_FILE_TIMEOUT_MS);
 
     // User raises the setting, then regenerates — the new value must be used.
     configured = 600;

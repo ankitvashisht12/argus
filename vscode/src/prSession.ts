@@ -4,10 +4,12 @@
  * panel, sidebar chat, GitHub submit) reads from and subscribes to.
  *
  * It orchestrates the pure `@argus/engine` library: fetch PR meta + diff via
- * `gh`, parse the diff into files/hunks, build a budgeted digest, run one
- * structured `claude` review (skipping it on a content-hash cache hit), and
- * normalize the result into line anchors. It also owns durable per-PR UI state
- * (reviewed-file set, chat transcript) and streams chat scoped to the digest.
+ * `gh`, parse the diff into files/hunks, then run the PROGRESSIVE per-file
+ * review — one whole-PR intent pass, then one `claude` call per changed file
+ * (bounded concurrency, per-file cache, mechanical lockfile/generated notes
+ * synthesized locally) — merging results into line anchors as each file lands.
+ * It also owns durable per-PR UI state (reviewed-file set, chat transcript)
+ * and streams chat scoped to the digest.
  *
  * This is the ONE module in the extension allowed to be stateful and long-lived;
  * everything else is a thin view over it. It is also the boundary where engine
@@ -39,14 +41,12 @@ import {
   DEFAULT_MODEL,
   GhClient,
   KeyValueStore,
+  PER_FILE_TIMEOUT_MS,
   ReviewCache,
   buildDigest,
-  buildReviewPrompt,
-  buildReviewSchema,
-  normalizeReview,
+  humanizeAgentError,
   parseUnifiedDiff,
-  resolveReviewTimeoutMs,
-  stableStringify,
+  runProgressiveReview,
 } from '@argus/engine';
 import type {
   AnchoredHunkReview,
@@ -54,9 +54,10 @@ import type {
   Digest,
   FileChange,
   FileReview,
+  FileReviewState,
   NormalizedReview,
+  ProgressiveResult,
   PullRequestMeta,
-  ReviewResult,
 } from '@argus/engine';
 
 import demoFixtureJson from './fixtures/demo.json';
@@ -106,10 +107,11 @@ export interface PrSessionLoadOptions {
   readonly agentModel?: string;
   /**
    * Live accessor for the `argus.reviewTimeoutSeconds` setting (seconds). A
-   * positive value overrides the size-scaled review timeout; `0`/`undefined`
-   * means "automatic". Read fresh on every review so changing the setting and
-   * regenerating takes effect immediately. Defaults to reading the VS Code
-   * configuration; injectable for tests.
+   * positive value overrides the fixed PER-FILE call timeout (each progressive
+   * review call covers one file); `0`/`undefined` means the default. Read fresh
+   * on every review so changing the setting and regenerating takes effect
+   * immediately. Defaults to reading the VS Code configuration; injectable for
+   * tests.
    */
   readonly reviewTimeoutSeconds?: () => number | undefined;
   /** Progress messages for a status bar / notification while loading. */
@@ -270,6 +272,10 @@ export class PrSession {
   #reviewStatus: ReviewStatus;
   /** In-flight background review, so callers/tests can await it settling. */
   #reviewInFlight: Promise<void> | null = null;
+  /** Per-file review lifecycle for the progressive run (empty in demo mode). */
+  #fileStates = new Map<string, FileReviewState>();
+  /** Last progressive result, kept so a single-file retry can merge into it. */
+  #lastResult: ProgressiveResult | null = null;
 
   readonly #onDidChangeReview = new vscode.EventEmitter<void>();
   readonly #onDidChangeReviewedState = new vscode.EventEmitter<string>();
@@ -465,6 +471,37 @@ export class PrSession {
     return this.#reviewInFlight ?? Promise.resolve();
   }
 
+  /** Per-file review state (progressive run), or `undefined` before it starts. */
+  fileReviewState(path: string): FileReviewState | undefined {
+    return this.#fileStates.get(path);
+  }
+
+  /**
+   * Live progress of the progressive review, for the status bar and the
+   * Overview: completed/total counts plus the paths currently being reviewed.
+   * `null` when no progressive run has produced any state (demo fixtures).
+   */
+  get reviewProgress(): {
+    readonly done: number;
+    readonly failed: number;
+    readonly total: number;
+    readonly running: readonly string[];
+    readonly files: readonly { path: string; status: string; error: string | null }[];
+  } | null {
+    if (this.#fileStates.size === 0) return null;
+    let done = 0;
+    let failed = 0;
+    const running: string[] = [];
+    const files: { path: string; status: string; error: string | null }[] = [];
+    for (const [path, state] of this.#fileStates) {
+      if (state.status === 'ready') done += 1;
+      if (state.status === 'error') failed += 1;
+      if (state.status === 'running') running.push(path);
+      files.push({ path, status: state.status, error: state.error ?? null });
+    }
+    return { done, failed, total: this.#fileStates.size, running, files };
+  }
+
   /** Overview slice for the overview webview, or `null` with no review. */
   get overview(): ReviewOverview | null {
     if (!this.#review) return null;
@@ -559,12 +596,28 @@ export class PrSession {
    */
   async startReview(opts: {
     bypassCache: boolean;
+    onlyPaths?: readonly string[];
     progress?: (message: string) => void;
   }): Promise<void> {
     this.#reviewStatus = 'running';
     this.#reviewError = null;
     this.#onDidChangeReview.fire();
     await this.#runReview(opts);
+  }
+
+  /**
+   * Retry the AI review of a SINGLE file (the per-file Retry action in the
+   * Overview after that file's call failed or timed out). Re-runs just that
+   * file — every other file keeps its existing notes — and merges the result.
+   * No-op in demo mode or before a progressive run has produced state.
+   */
+  async retryFile(path: string): Promise<void> {
+    if (!this.#agent || !this.#lastResult) return;
+    this.#reviewInFlight = this.startReview({
+      bypassCache: true,
+      onlyPaths: [path],
+    });
+    await this.#reviewInFlight;
   }
 
   /**
@@ -656,33 +709,24 @@ export class PrSession {
   }
 
   /**
-   * Run the review pipeline into {@link review} / {@link reviewError}, then fire
-   * {@link onDidChangeReview}. On a cache hit (unless bypassed) claude is
-   * skipped. A missing or failing claude sets an actionable `reviewError` and
-   * leaves `review` null — it never fabricates an empty successful review.
+   * Run the progressive per-file review into {@link review} /
+   * {@link reviewError}, firing {@link onDidChangeReview} as the intent pass and
+   * then each file's notes land (partial reviews are usable immediately).
+   *
+   * Failure posture: one file failing/timing out marks THAT file's state as
+   * `'error'` (retryable from the Overview) and never poisons the rest. The
+   * whole review lands in the `'error'` state only when nothing could run at
+   * all — claude missing, or every AI-reviewed file failed with no prior
+   * result. Contract 19 still holds for that state: `review === null` with an
+   * actionable `reviewError`.
    */
   async #runReview(opts: {
     bypassCache: boolean;
+    onlyPaths?: readonly string[];
     progress?: (message: string) => void;
   }): Promise<void> {
     const progress = opts.progress ?? (() => undefined);
     this.#reviewError = null;
-
-    const cacheKey = this.#cache?.hash(
-      stableStringify({
-        headSha: this.#meta.headSha,
-        digest: this.#digest,
-        model: this.#model,
-      }),
-    );
-
-    if (!opts.bypassCache && this.#cache && cacheKey) {
-      const hit = await this.#cache.get(cacheKey);
-      if (hit) {
-        this.#setReview(hit);
-        return;
-      }
-    }
 
     if (!this.#agent || !(await this.#agent.isAvailable())) {
       this.#setReviewError(
@@ -694,59 +738,81 @@ export class PrSession {
     }
 
     progress('Generating AI review…');
-    // Scale the wall-clock timeout to the work: the prompt now requires a note
-    // for every hunk, so a fixed 90s default times out real PRs. A positive
-    // `argus.reviewTimeoutSeconds` overrides the computed value.
-    const timeoutMs = resolveReviewTimeoutMs(this.#reviewTimeoutSeconds(), {
-      hunkCount: this.#digest.hunks.length,
-      digestChars: this.#digest.totalChars,
-    });
+    // A positive `argus.reviewTimeoutSeconds` overrides the fixed per-file
+    // budget (each call reviews ONE file, so the default suffices for most PRs).
+    const overrideSeconds = this.#reviewTimeoutSeconds();
+    const perFileTimeoutMs =
+      typeof overrideSeconds === 'number' &&
+      Number.isFinite(overrideSeconds) &&
+      overrideSeconds > 0
+        ? Math.round(overrideSeconds * 1000)
+        : PER_FILE_TIMEOUT_MS;
+
     try {
-      const prompt = buildReviewPrompt(this.#meta, this.#digest);
-      const result = await this.#agent.runStructured<ReviewResult>(
-        prompt,
-        // Bind the schema's minimum hunk count to the digest so the model is
-        // steered to return one note per hunk (coverage), not just the few it
-        // deems interesting.
-        buildReviewSchema(this.#digest.hunks.length),
+      const result = await runProgressiveReview(
         {
+          meta: this.#meta,
+          files: this.#files,
+          agent: this.#agent,
           model: this.#model,
-          timeoutMs,
+          cache: this.#cache,
+          bypassCache: opts.bypassCache,
+          perFileTimeoutMs,
+          onlyPaths: opts.onlyPaths,
+          prior: opts.onlyPaths ? this.#lastResult : null,
           onModelFallback: (fallback, original) =>
             progress(`Model ${original} unavailable; retried with ${fallback}.`),
         },
+        {
+          onSnapshot: (snapshot) => {
+            // Live partial review: keep status 'running' but let every surface
+            // render what has landed so far.
+            this.#review = snapshot;
+            this.#onDidChangeReview.fire();
+          },
+          onFileState: (path, state) => {
+            this.#fileStates.set(path, state);
+            this.#onDidChangeReview.fire();
+          },
+        },
       );
-      const normalized = normalizeReview(
-        result.data,
-        this.#files,
-        this.#digest.aliasToHunkId,
-      );
-      this.#setReview(normalized);
-      if (this.#cache && cacheKey) await this.#cache.set(cacheKey, normalized);
+
+      this.#lastResult = result;
+      this.#fileStates = new Map(Object.entries(result.fileStates));
+
+      // Total failure = not a single file produced notes (mechanical files
+      // count — an all-lockfile PR is legitimately ready). Anything partial
+      // stays 'ready' with per-file error states retryable from the Overview.
+      const states = [...this.#fileStates.values()];
+      const readyCount = states.filter((s) => s.status === 'ready').length;
+      const errorCount = states.filter((s) => s.status === 'error').length;
+      if (readyCount === 0 && errorCount > 0) {
+        const first = states.find((s) => s.error)?.error ?? 'The AI review failed.';
+        this.#setReviewError(this.#reviewErrorMessage(first));
+        return;
+      }
+      this.#setReview(result.review);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.#setReviewError(this.#reviewErrorMessage(message, timeoutMs));
+      this.#setReviewError(this.#reviewErrorMessage(message));
     }
   }
 
   /**
-   * Turn a raw review failure into an actionable message. A timeout gets a
-   * specific call to action (Regenerate + the `argus.reviewTimeoutSeconds`
-   * setting) rather than the bare "Claude Code timed out." from the engine.
+   * Turn a raw review failure into an actionable message: login/usage-limit
+   * failures get their specific call to action (via the engine's
+   * `humanizeAgentError`), and a timeout points at Regenerate + the
+   * `argus.reviewTimeoutSeconds` setting. The engine's evidence (elapsed time +
+   * last CLI output) is already inside the raw message and is preserved.
    */
-  #reviewErrorMessage(rawMessage: string, timeoutMs: number): string {
+  #reviewErrorMessage(rawMessage: string): string {
+    const humanized = humanizeAgentError(rawMessage);
+    if (humanized !== rawMessage) return humanized;
     if (!/timed out/i.test(rawMessage)) return rawMessage;
-    const seconds = Math.round(timeoutMs / 1000);
-    // Keep the engine's evidence (elapsed + last CLI output) so the user can
-    // see WHY it timed out, then add the call to action.
-    const detail = /(Last output:|No output was received)/.test(rawMessage)
-      ? ` ${rawMessage}`
-      : '';
     return (
-      `The AI review timed out after ${seconds}s.${detail} This PR may be large or slow ` +
-      'to analyze — run “ARGUS: Regenerate Review” to try again, or raise the ' +
-      '“argus.reviewTimeoutSeconds” setting to allow more time. The diff is ' +
-      'still available without AI.'
+      `${rawMessage} Run “ARGUS: Regenerate Review” to try again, or raise the ` +
+      '“argus.reviewTimeoutSeconds” setting to allow more time per file. The ' +
+      'diff is still available without AI.'
     );
   }
 

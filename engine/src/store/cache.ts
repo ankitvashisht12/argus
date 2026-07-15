@@ -125,13 +125,17 @@ export class ReviewCache {
   }
 
   /**
-   * Read a cached review by key. A miss, an unreadable file, or a corrupt
+   * Read a cached entry by key. A miss, an unreadable file, or a corrupt
    * (non-JSON) entry all resolve to `undefined` — this never throws.
    *
+   * Entries default to {@link NormalizedReview} (the whole-review shape) but the
+   * progressive orchestrator also stores per-file slices and the intent pass
+   * under their own keys — pass `T` to type those reads.
+   *
    * @param key A sha256 key from {@link ReviewCache.hash}.
-   * @returns The cached review, or `undefined` on a miss/corrupt entry.
+   * @returns The cached entry, or `undefined` on a miss/corrupt entry.
    */
-  async get(key: string): Promise<NormalizedReview | undefined> {
+  async get<T = NormalizedReview>(key: string): Promise<T | undefined> {
     let text: string;
     try {
       text = await readFile(this.#entryPath(key), 'utf8');
@@ -139,19 +143,19 @@ export class ReviewCache {
       return undefined;
     }
     try {
-      return JSON.parse(text) as NormalizedReview;
+      return JSON.parse(text) as T;
     } catch {
       return undefined;
     }
   }
 
   /**
-   * Write a review under the given key (atomic temp-file + rename).
+   * Write an entry under the given key (atomic temp-file + rename).
    *
    * @param key    A sha256 key from {@link ReviewCache.hash}.
-   * @param review The normalized review to persist.
+   * @param review The JSON-serializable entry to persist.
    */
-  async set(key: string, review: NormalizedReview): Promise<void> {
+  async set(key: string, review: unknown): Promise<void> {
     const data = JSON.stringify(review);
     await atomicWriteFile(this.#entryPath(key), data);
   }

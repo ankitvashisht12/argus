@@ -16,19 +16,13 @@ export {
   DEFAULT_MODEL,
   DEFAULT_FALLBACK_MODEL,
   DEFAULT_TIMEOUT_MS,
-  REVIEW_TIMEOUT_BASE_MS,
-  REVIEW_TIMEOUT_PER_HUNK_MS,
-  REVIEW_TIMEOUT_PER_KB_MS,
-  REVIEW_TIMEOUT_CAP_MS,
-  computeReviewTimeoutMs,
-  resolveReviewTimeoutMs,
   isModelAvailabilityError,
+  humanizeAgentError,
   buildStructuredArgs,
   buildStreamArgs,
 } from './agent/claude.js';
 export type {
   ClaudeAgentOptions,
-  ReviewTimeoutInput,
   SpawnLike,
   SpawnLikeOptions,
   ChildProcessLike,
@@ -53,9 +47,6 @@ export type {
 // review
 export {
   buildDigest,
-  buildReviewPrompt,
-  reviewSchema,
-  buildReviewSchema,
   firstChangedLine,
   normalizeReview,
   bucketFiles,
@@ -72,6 +63,35 @@ export type {
   FileBucket,
   HeuristicBucket,
 } from './review/pipeline.js';
+
+// progressive review orchestrator
+export {
+  runProgressiveReview,
+  orderForReview,
+  isMechanicalFile,
+  mechanicalNote,
+  sanitizeNote,
+  buildIntentPrompt,
+  buildFileReviewPrompt,
+  buildFileReviewSchema,
+  intentSchema,
+  PROGRESSIVE_CONCURRENCY,
+  PER_FILE_TIMEOUT_MS,
+  INTENT_TIMEOUT_MS,
+  REVIEW_PROMPT_VERSION,
+  FILE_DIGEST_BUDGET,
+} from './review/progressive.js';
+export type {
+  FileReviewStatus,
+  FileReviewState,
+  IntentResult,
+  ProgressiveAgent,
+  ProgressiveCache,
+  ProgressiveInput,
+  ProgressiveCallbacks,
+  ProgressiveResult,
+  FileReviewPayload,
+} from './review/progressive.js';
 
 // store
 export {

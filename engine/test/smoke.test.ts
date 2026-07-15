@@ -10,12 +10,8 @@ import * as engine from '../src/index.js';
 import { parseUnifiedDiff } from '../src/diff/parse.js';
 import { ClaudeAgent } from '../src/agent/claude.js';
 import { GhClient } from '../src/github/gh.js';
-import {
-  buildDigest,
-  buildReviewPrompt,
-  normalizeReview,
-  reviewSchema,
-} from '../src/review/pipeline.js';
+import { buildDigest, normalizeReview } from '../src/review/pipeline.js';
+import { runProgressiveReview, buildFileReviewSchema } from '../src/review/progressive.js';
 import { ReviewCache } from '../src/store/cache.js';
 
 describe('engine public surface', () => {
@@ -24,9 +20,8 @@ describe('engine public surface', () => {
     expect(engine.ClaudeAgent).toBe(ClaudeAgent);
     expect(engine.GhClient).toBe(GhClient);
     expect(engine.buildDigest).toBe(buildDigest);
-    expect(engine.buildReviewPrompt).toBe(buildReviewPrompt);
     expect(engine.normalizeReview).toBe(normalizeReview);
-    expect(engine.reviewSchema).toBe(reviewSchema);
+    expect(engine.runProgressiveReview).toBe(runProgressiveReview);
     expect(engine.ReviewCache).toBe(ReviewCache);
   });
 
@@ -52,10 +47,9 @@ describe('engine public surface', () => {
 
   it('review pipeline is defined', () => {
     expect(typeof buildDigest).toBe('function');
-    expect(typeof buildReviewPrompt).toBe('function');
     expect(typeof normalizeReview).toBe('function');
-    expect(reviewSchema).toBeTypeOf('object');
-    expect(reviewSchema).toHaveProperty('properties');
+    expect(typeof runProgressiveReview).toBe('function');
+    expect(buildFileReviewSchema(1)).toHaveProperty('properties');
   });
 
   it('review cache exposes its methods', () => {

@@ -112,8 +112,8 @@ describe('PrSession progressive loading', () => {
       agent: agentStub(false),
     });
 
-    expect(session.reviewStatus).toBe('running');
-
+    // (No 'running' assertion here: the unavailable-agent path settles within
+    // a few microtasks, racing the check. The settled state is the contract.)
     await session.reviewSettled();
 
     // Contract 19: errored review is null + reviewError set, never a fake empty

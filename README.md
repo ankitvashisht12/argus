@@ -29,8 +29,12 @@ to the first changed line, importance-tagged, with every hunk covered.
   open, streaming in as the model responds.
 - **Submit to GitHub** — write your own comments on diff lines and submit them as
   a single review: **comment**, **approve**, or **request changes**.
-- **Progressive loading** — files and diffs open instantly; the AI review streams
-  in behind them.
+- **Progressive per-file review** — files and diffs open instantly, then the AI
+  reviews file by file (reading order: source first, lockfiles last) with live
+  progress — "Reviewing loop.ts · 7/23" — and notes appearing as each file lands.
+  One file failing or timing out never sinks the rest; retry it alone from the
+  Overview. Lockfiles/generated files get an instant mechanical note instead of
+  wasting an AI call.
 - **Local-first** — ARGUS drives your own `claude` and `gh` CLIs. Your code and
   diffs never leave your machine.
 - **Zero-setup demo** — a bundled fixture you can open offline, no `gh` or

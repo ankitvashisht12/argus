@@ -287,11 +287,25 @@ class ReviewedDecorationProvider
   provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
     if (uri.scheme !== FILE_URI_SCHEME) return undefined;
     const session = this.getSession();
-    if (session?.isReviewed(pathFromResourceUri(uri))) {
+    if (!session) return undefined;
+    const path = pathFromResourceUri(uri);
+    if (session.isReviewed(path)) {
       return {
         badge: '✓',
         tooltip: 'Reviewed',
         color: new vscode.ThemeColor('disabledForeground'),
+      };
+    }
+    // While the progressive review is in flight, show each file's AI state.
+    const state = session.fileReviewState(path);
+    if (state?.status === 'running') {
+      return { badge: '◐', tooltip: 'ARGUS is reviewing this file…' };
+    }
+    if (state?.status === 'error') {
+      return {
+        badge: '⚠',
+        tooltip: `ARGUS could not review this file — retry from the Overview. ${state.error ?? ''}`,
+        color: new vscode.ThemeColor('errorForeground'),
       };
     }
     return undefined;
@@ -343,6 +357,8 @@ class ArgusTreeProvider
         session.onDidChangeReview(() => {
           this.#onDidChangeTreeData.fire();
           this.#updateBadge();
+          // Per-file review-state badges (◐/⚠) follow the progressive run.
+          this.deco.fire();
         }),
         session.onDidChangeReviewedState((path) => {
           this.#onDidChangeTreeData.fire();
