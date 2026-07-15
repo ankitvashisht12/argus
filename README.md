@@ -46,7 +46,7 @@ Prefer to sideload? Grab the `.vsix` from the
 [Releases page](https://github.com/ankitvashisht12/argus/releases) and install it:
 
 ```sh
-code --install-extension argus-review-0.1.2.vsix
+code --install-extension argus-review-0.1.5.vsix
 ```
 
 ### Requirements
